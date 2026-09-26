@@ -33,6 +33,30 @@ class MpeResult:
     band_upper_m: Optional[Decimal]
 
 
+class LoadKind(str, Enum):
+    MAX = "max"
+    MIN = "min"
+    BAND_TRANSITION = "band_transition"
+    FILL = "fill"
+
+
+@dataclass(frozen=True)
+class LoadEntry:
+    """One load in a Weighing test's generated load sequence."""
+
+    L: Decimal
+    m: Decimal
+    kind: LoadKind
+    mpe: Decimal
+    mpe_lookup: MpeResult
+
+    @property
+    def is_anchor(self) -> bool:
+        """True for a sourced anchor (max/min/band_transition); False for a
+        placeholder fill point — see engine/load_sequence.py."""
+        return self.kind is not LoadKind.FILL
+
+
 @dataclass(frozen=True)
 class WeighingResult:
     """The full Weighing-test derivation — never just a pass/fail verdict."""

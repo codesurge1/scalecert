@@ -97,3 +97,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — deterministic weighing load-sequence generator
+
+**Done:** Added `engine/load_sequence.py` (`generate_load_sequence`): produces the applied-load (`L`) sequence for a Weighing test so the technician enters only I and ΔL, never L. Sourced anchors — Max; Min (only if ≥100mg per A.4.4.1, else omitted); every Table 6 band-transition load in range, read directly from `engine.mpe.BAND_TABLE` (no second copy of the band edges). ≥5 distinct loads (the 8.3.3 verification count — documented explicitly as *not* the ≥10 of full type evaluation). When anchors fall short of 5, fills evenly-spaced points strictly inside Band 1 — labeled `FILL_SPACING_STRATEGY` as a deterministic placeholder convention pending RRSL confirmation, never presented as sourced (`LoadEntry.kind`/`is_anchor` distinguishes them). Documented that bidirectional (up/down) expansion is deferred to the reading layer, and that multi-interval instruments are a known future extension. Extended `engine/types.py` with `LoadKind`/`LoadEntry`. Ran the full suite: **112 passed** (102 existing + 10 new, no regressions, purity test still green). Updated `docs/architecture.md`'s Engine design section.
+
+**Next:** Phase 1's remaining item — the seven Pydantic model signatures (stubs) — then Phase 2, the Weighing vertical slice end to end.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

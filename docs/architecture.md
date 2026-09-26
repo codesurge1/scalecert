@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), and engine design (Weighing only) are authoritative. PDF and audit sections are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), and engine design (Weighing calculation + load-sequence generator) are authoritative. PDF and audit sections are pending their build tasks.
 
 ## System overview
 
@@ -44,6 +44,14 @@ All arithmetic uses `Decimal`, never `float` — a boundary verdict (e.g. `Ec ==
 **Weighing calculation** (`engine/weighing.py`, `compute_weighing_result`) — `E = I + 1/2*e - deltaL - L`, `Ec = E - E0`, verdict `PASS` iff `|Ec| <= mpe` (limit inclusive). Returns a `WeighingResult` with the full derivation (`L, I, delta_l, E0, E, Ec, mpe, margin, passed`) plus the `MpeResult` that produced `mpe` — never just a boolean. `margin = mpe - |Ec|` so a near-miss is visible, not just a verdict.
 
 **Validation.** The canonical worked example (Class III, e=1g, initial, load 300g → Band 1 → mpe=±0.5g; reading 300.4g → PASS; 300.6g → FAIL — `docs/plan.md` Phase 1) was written as a failing test *before* the engine existed, then implemented until green. Per CLAUDE.md, one example is a smoke test, not validation: no verdict is trusted until `tests/test_mpe_boundaries.py`'s boundary-value table passes — every Table 6 band edge from both sides for all four classes, the at-limit-inclusive/just-over verdict boundary in both directions, `in_service` doubling actually flipping a verdict, and the Max/Min ends of each class's table range.
+
+**Load-sequence generator** (`engine/load_sequence.py`, `generate_load_sequence`) — produces the applied-load (`L`) sequence for a Weighing test, so the technician enters only Indication (I) and additional load (ΔL); `L` is never technician-entered. Inputs: `accuracy_class`, `e`, `max_capacity`, `min_capacity` (the sole genuinely optional argument — `Optional[Decimal]`, not a default), `verification_type`.
+
+- **Verification count is ≥5, not ≥10.** The 8.3.3 verification checklist this project implements needs ≥5 distinct test loads (`MIN_VERIFICATION_LOAD_COUNT`); the "≥10" figure seen in some visit-report material is for full type evaluation — a separate, out-of-scope test battery. Conflating the two would overtest every verification for no regulatory reason.
+- **Sourced anchors** (always present when applicable): Max; Min, but only if given and ≥100 mg (0.1 g, per A.4.4.1 — otherwise omitted, never clamped or guessed); every Table 6 band-transition load that falls within `[Min-or-0, Max]`. The transition loads are read directly out of `engine.mpe.BAND_TABLE` — the same table `lookup_mpe` uses — never a second hardcoded copy of the band edges.
+- **Band-1 fill spacing is a documented placeholder, not a sourced value.** OIML does not prescribe how many extra loads, or where, to place inside Band 1 beyond the mandatory anchors, and RRSL has not yet confirmed a convention (`docs/plan.md` Open questions). When anchors fall short of the ≥5 minimum, the gap is filled with evenly spaced points strictly inside Band 1 — deterministic and reproducible (never random, so a certification record reproduces identically), but explicitly labeled (`FILL_SPACING_STRATEGY`) as a convention pending RRSL confirmation, changeable in one place. Every `LoadEntry.kind` is `max` / `min` / `band_transition` (sourced) or `fill` (convention) — `LoadEntry.is_anchor` is `False` only for `fill` — so a report or UI can never present a placeholder point as a mandated one.
+- **Bidirectional testing is not dropped, just deferred.** The plan requires each load tested going up and coming back down; this generator returns only the distinct ascending `L` values — expanding each into an "up" and "down" reading is the reading layer's job (Phase 2), not this module's.
+- **Single-interval only, for now.** The generator assumes a single-interval instrument (one `e` across the whole range). Multi-interval instruments (`instruments.is_multi_interval`) — where `e` itself changes across sub-ranges — are a known future extension, not handled here.
 
 ## Roles & permissions
 
