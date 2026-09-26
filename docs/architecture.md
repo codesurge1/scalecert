@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, and session lifecycle are authoritative as of ADR-0005. Engine, API, PDF, and audit sections are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), and API surface (walking-skeleton scope) are authoritative. Engine, PDF, and audit sections are pending their build tasks.
 
 ## System overview
 

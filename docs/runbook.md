@@ -17,6 +17,8 @@ Keys from `.env.example`:
 
 ## Local setup
 
+Backend (`cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload`) on `http://localhost:8000`, routes under `/api`. Frontend (`cd frontend && npm install && npm run dev`) on `http://localhost:5173`. Full instructions and the RLS acceptance check: see [README.md](../README.md#running-the-walking-skeleton).
+
 ## Database migration & reset
 
 To set up a fresh project:
@@ -28,5 +30,7 @@ To set up a fresh project:
 To reset: drop and recreate the project (or its schema), then re-run `db/schema.sql` and `db/seed.sql`.
 
 ## Deploy (Vercel)
+
+One project, one domain, two [Vercel Services](https://vercel.com/docs/services) defined in `/vercel.json` (repo root): `frontend` (Vite build, served at `/`) and `backend` (FastAPI, `backend/main.py` entrypoint shim, reachable under `/api`). Env vars are set in the Vercel dashboard, not committed anywhere — full list, and the post-deploy RLS acceptance check, are in [README.md](../README.md#deploying-to-vercel).
 
 ## Common issues
