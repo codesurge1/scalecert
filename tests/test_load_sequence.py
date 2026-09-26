@@ -75,12 +75,13 @@ def test_min_omitted_when_none():
 
 
 # ---------------------------------------------------------------------------
-# Anchors alone are fewer than 5 -> fill loads added to reach the minimum,
+# Anchors alone are fewer than the target -> fill loads added to reach it,
 # and they're tagged `fill` (never mistaken for a sourced anchor).
 # ---------------------------------------------------------------------------
 def test_fills_added_to_reach_minimum_count():
     # Max=300 is entirely inside Band 1 (first transition is 500) and Min is
-    # omitted -> only one anchor (Max) exists; four fills must be added.
+    # omitted -> only one anchor (Max) exists; nine fills must be added to
+    # reach the target of MIN_VERIFICATION_LOAD_COUNT.
     sequence = generate_load_sequence(
         accuracy_class=AccuracyClass.III,
         e=D("1"),
@@ -105,7 +106,8 @@ def test_fills_added_to_reach_minimum_count():
 
 def test_fill_count_matches_shortfall_with_four_anchors():
     # Max=5000, Min=10 (qualifies), both transitions in range -> 4 anchors;
-    # exactly one fill needed.
+    # the shortfall against the target (MIN_VERIFICATION_LOAD_COUNT) is made
+    # up with fills.
     sequence = generate_load_sequence(
         accuracy_class=AccuracyClass.III,
         e=D("1"),
@@ -114,7 +116,55 @@ def test_fill_count_matches_shortfall_with_four_anchors():
         verification_type=VerificationType.INITIAL,
     )
     assert len(sequence) == MIN_VERIFICATION_LOAD_COUNT
-    assert len(_by_kind(sequence, LoadKind.FILL)) == 1
+    assert len(_by_kind(sequence, LoadKind.FILL)) == MIN_VERIFICATION_LOAD_COUNT - 4
+
+
+# ---------------------------------------------------------------------------
+# Project target is 10 (a lab convention exceeding OIML's 5-load minimum, not
+# an OIML requirement of 10 itself — see engine/load_sequence.py docstring).
+# A typical RRSL Class III instrument must reach that target.
+# ---------------------------------------------------------------------------
+def test_typical_class_iii_instrument_reaches_target_of_ten():
+    # e=10, Max=30000, Min=200 -> anchors: Max(30000), Min(200), and both
+    # in-range band transitions (5000, 20000) = 4 anchors; six fills needed
+    # to reach the target of 10.
+    sequence = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("10"),
+        max_capacity=D("30000"),
+        min_capacity=D("200"),
+        verification_type=VerificationType.INITIAL,
+    )
+
+    assert MIN_VERIFICATION_LOAD_COUNT == 10
+    assert len(sequence) >= 10
+
+    loads = [entry.L for entry in sequence]
+    assert loads == sorted(loads)
+    assert len(loads) == len(set(loads))  # distinct, no duplicates
+
+    anchors = [entry for entry in sequence if entry.is_anchor]
+    fills = _by_kind(sequence, LoadKind.FILL)
+    assert len(anchors) == 4
+    assert len(fills) == 6
+    for fill in fills:
+        assert not fill.is_anchor
+
+    by_L = {entry.L: entry for entry in sequence}
+    assert by_L[D("30000")].kind is LoadKind.MAX
+    assert by_L[D("200")].kind is LoadKind.MIN
+    assert by_L[D("5000")].kind is LoadKind.BAND_TRANSITION
+    assert by_L[D("20000")].kind is LoadKind.BAND_TRANSITION
+
+    # Same inputs -> same output, every time.
+    again = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("10"),
+        max_capacity=D("30000"),
+        min_capacity=D("200"),
+        verification_type=VerificationType.INITIAL,
+    )
+    assert [entry.L for entry in again] == loads
 
 
 # ---------------------------------------------------------------------------

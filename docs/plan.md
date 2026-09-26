@@ -23,7 +23,7 @@ Owned infra track, generous budget (the original "3 hours, whole team" estimate 
 - **One example is a smoke test, not validation.** Build a boundary-value test table — every MPE band edge from both sides, Max, Min, both directions, initial and in-service-doubled — green before any engine number is trusted. The test suite is the project's credibility.
 - Write all seven Pydantic model signatures as stubs to unblock the lanes.
 - Enforce engine purity via an import check in CI from the first commit.
-- **Load count is 5, not 10**, for the 8.3.3 verification scope (the "≥10" in the visit report is the full type-evaluation figure).
+- **Load count: OIML's 8.3.3 sourced minimum is 5.** The project's own working target was later raised to 10 as a lab convention exceeding that minimum (not an OIML requirement, and not the same figure as the unrelated "≥10" full-type-evaluation visit-report number) — see `docs/architecture.md` Engine section.
 
 ## Phase 2 — Weighing vertical slice, end to end
 Engine (bidirectional, auto-generated load sequence — technician enters only I and ΔL) → Pydantic models → `POST /sessions/{id}/readings` (validate, compute, write raw reading + result together) → DB + RLS → frontend form → full-derivation result display (L, I, ΔL, E, Ec, E0, mpe, margin — not just PASS/FAIL) → submit → approve by a different user → PDF to Supabase Storage with QR → public `/verify/{cert}`.

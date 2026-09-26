@@ -4,11 +4,19 @@ Produces the sequence of applied loads L a Weighing test must cover, so the
 technician enters only Indication (I) and additional load (deltaL) at each
 load — never L itself (CLAUDE.md).
 
-Verification load count: >=5 DISTINCT test loads, not >=10. The ">=10" figure
-that appears in some visit-report material is for FULL TYPE EVALUATION (the
-complete intrinsic-error test battery — out of scope per CLAUDE.md), not for
-the OIML clause 8.3.3 verification checklist this project implements.
-Conflating the two would overtest every verification for no regulatory reason.
+Verification load count — two distinct numbers, do not conflate them:
+  - The OIML clause 8.3.3 verification checklist this project implements has
+    a SOURCED MINIMUM of >=5 distinct test loads. That minimum is fixed by
+    the standard and does not change.
+  - This project's own TARGET is 10 distinct test loads
+    (MIN_VERIFICATION_LOAD_COUNT) — a LAB CONVENTION, not an OIML
+    requirement. Spreading more load points across the range gives a more
+    thorough verification and matches common RRSL practice; OIML itself only
+    requires 5. It is a coincidence of numbering, not the same figure, that
+    a DIFFERENT ">=10" also appears in some visit-report material for FULL
+    TYPE EVALUATION (the complete intrinsic-error test battery — a separate,
+    out-of-scope regime per CLAUDE.md). This module's 10 is never sourced
+    from, or a stand-in for, that figure.
 
 Sourced anchors (mandatory, always present when applicable):
   - Max (the instrument's maximum capacity).
@@ -47,9 +55,12 @@ from typing import List, Optional
 from engine.mpe import BAND_TABLE, lookup_mpe
 from engine.types import AccuracyClass, LoadEntry, LoadKind, VerificationType
 
-# 8.3.3 verification scope: >=5 distinct loads. NOT the >=10 of full type
-# evaluation (a different, out-of-scope test battery) — see module docstring.
-MIN_VERIFICATION_LOAD_COUNT = 5
+# Project target, a lab convention: 10 distinct loads. The OIML 8.3.3
+# sourced minimum is 5 (unchanged); 10 exceeds it for more thorough coverage
+# across the range, matching common RRSL practice — it is NOT itself an OIML
+# requirement, and it is NOT the unrelated >=10 of full type evaluation (a
+# different, out-of-scope test battery) — see module docstring.
+MIN_VERIFICATION_LOAD_COUNT = 10
 
 # A.4.4.1: Min is a mandatory anchor only at or above 100 mg (0.1 g).
 MIN_CAPACITY_THRESHOLD_GRAMS = Decimal("0.1")

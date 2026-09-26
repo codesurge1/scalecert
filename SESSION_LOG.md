@@ -217,3 +217,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — raise the Weighing verification load-sequence target to 10 (lab convention)
+
+**Done:** Changed `engine.load_sequence.MIN_VERIFICATION_LOAD_COUNT` from 5 to 10. Rewrote the surrounding module docstring and inline comment to state the distinction honestly and explicitly, per the task: OIML clause 8.3.3's sourced minimum is ≥5 distinct test loads and that figure does not change; this project's own working target is now 10, a lab convention chosen because spreading more load points across the range gives a more thorough verification and matches common RRSL practice — it is NOT an OIML requirement of 10, and it is a coincidence of numbering (not the same figure) that a *different* "≥10" already existed elsewhere for full type evaluation, a separate out-of-scope test battery. Sourced anchors (Max; Min when ≥100mg; in-range band transitions) are untouched — same logic, same tagging; only the fill-count shortfall calculation changes, automatically, since it derives from the constant. Fills remain evenly spaced inside Band 1, deterministic, tagged `FILL`, never colliding with an anchor's exact load. Updated `tests/test_load_sequence.py`: the "four anchors" test's fill-count assertion and comment now reflect the shortfall against 10 (was hardcoded to the old shortfall of 1, now derives as `MIN_VERIFICATION_LOAD_COUNT - 4` = 6); added `test_typical_class_iii_instrument_reaches_target_of_ten` for the task's specified instrument (Class III, e=10, Max=30000, Min=200 → 4 anchors, 6 fills, 10 total, distinct, deterministic). The other existing tests needed no changes — they already asserted against the `MIN_VERIFICATION_LOAD_COUNT` constant rather than a hardcoded number, so they adapted automatically. Full suite: **180 passed** (engine + backend, incl. `tests/test_purity.py` still green — no new imports, stdlib-only, Decimal-only, unchanged). Updated `docs/architecture.md`'s Engine section (same careful two-numbers framing) and corrected a now-stale `docs/plan.md` Phase-1 bullet that still said "Load count is 5, not 10" (code-wins rule — left unfixed it would actively contradict the code). Did not touch `backend/`, `frontend/`, or `vercel.json` — pure engine + docs change.
+
+**Next:** Verify on the preview deploy that `GET .../weighing/sequence` now returns 10 loads for a typical instrument and the Weighing form table renders all of them correctly (it already handles an arbitrary row count, so no frontend change should be needed — worth confirming). If RRSL ever confirms an actual fill-spacing convention, `FILL_SPACING_STRATEGY` is still the one place to change it.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms) — now filling more points (up to 9) inside Band 1 when the whole range sits there; same open item, larger in practice.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
