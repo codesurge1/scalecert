@@ -7,4 +7,8 @@ export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
 
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+// In production the backend shares this domain (Vercel Services, routed by
+// /vercel.json), so the default is a same-origin relative path — never a
+// hardcoded host. VITE_API_BASE overrides this for local dev, where the Vite
+// dev server and uvicorn are on different ports.
+export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
