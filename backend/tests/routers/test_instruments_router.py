@@ -1,6 +1,7 @@
 """Router-level tests for /api/instruments — DB layer entirely mocked."""
 
 import app.repositories.instruments as instruments_repo
+import app.repositories.sessions as sessions_repo
 from app.deps import AuthContext, get_auth_context
 from app.main import app
 from fastapi.testclient import TestClient
@@ -99,3 +100,42 @@ def test_list_instruments_returns_rows(monkeypatch):
     resp = client.get("/api/instruments")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+def test_list_instrument_sessions_returns_rows(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: {"id": "instr-1"})
+    monkeypatch.setattr(
+        sessions_repo,
+        "list_sessions_for_instrument",
+        lambda client, instrument_id: [
+            {
+                "id": "sess-2",
+                "instrument_id": "instr-1",
+                "verification_type": "subsequent",
+                "status": "draft",
+                "created_by": _FAKE_AUTH.user_id,
+                "created_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "id": "sess-1",
+                "instrument_id": "instr-1",
+                "verification_type": "initial",
+                "status": "issued",
+                "created_by": _FAKE_AUTH.user_id,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        ],
+    )
+    monkeypatch.setattr(sessions_repo, "get_session_test_selections", lambda client, session_id: [])
+
+    resp = client.get("/api/instruments/instr-1/sessions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [row["id"] for row in body] == ["sess-2", "sess-1"]
+    assert body[0]["verification_type"] == "subsequent"
+
+
+def test_list_instrument_sessions_404_when_instrument_not_found(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: None)
+    resp = client.get("/api/instruments/does-not-exist/sessions")
+    assert resp.status_code == 404

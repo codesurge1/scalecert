@@ -17,6 +17,17 @@ def get_session(client: Client, session_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def list_sessions_for_instrument(client: Client, instrument_id: str) -> list[dict]:
+    return (
+        client.table(SESSIONS_TABLE)
+        .select("*")
+        .eq("instrument_id", instrument_id)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+
+
 def insert_session_test_selection(client: Client, session_id: str, test_type: str) -> dict:
     rows = (
         client.table(SELECTIONS_TABLE)

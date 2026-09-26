@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/AppShell";
-import { StartVerificationDialog } from "@/components/StartVerificationDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -112,10 +111,9 @@ export function InstrumentsListPage() {
                   <TableCell>{instrument.min_capacity ?? "—"}</TableCell>
                   <TableCell className="capitalize">{instrument.indication_type.replaceAll("_", " ")}</TableCell>
                   <TableCell className="text-right">
-                    <StartVerificationDialog
-                      instrumentId={instrument.id}
-                      instrumentLabel={instrument.type_designation || `Class ${instrument.accuracy_class} instrument`}
-                    />
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={`/instruments/${instrument.id}`}>View</Link>
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

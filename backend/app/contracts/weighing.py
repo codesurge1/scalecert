@@ -104,6 +104,53 @@ class WeighingSequenceEntryOut(BaseModel):
     mpe: StrictDecimal
 
 
+class WeighingReadingRecordOut(BaseModel):
+    """One row of `GET /sessions/{id}/weighing/readings` — a previously
+    submitted reading paired with its computed result, so the client can
+    reconstruct the R76-2 form table (which cells are filled, their E/Ec,
+    pass/fail) on page load/refresh without resubmitting or recomputing
+    anything. Built from the stored `test_readings.data` (the
+    WeighingReadingIn JSON this reading was submitted as) and its paired
+    `test_results.result` (the WeighingResultOut JSON the engine computed) —
+    read back, never recomputed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence_no: int
+    direction: Direction
+    I: StrictDecimal
+    delta_l: StrictDecimal
+    E0: StrictDecimal
+    E: StrictDecimal
+    Ec: StrictDecimal
+    mpe: StrictDecimal
+    passed: bool
+
+
+def reading_and_result_to_record_out(reading_row: dict, result_row: dict) -> WeighingReadingRecordOut:
+    """Build a WeighingReadingRecordOut from a raw `test_readings` row and its
+    paired `test_results` row (matched by `test_results.reading_id`). Both
+    rows' JSONB payloads (`data`, `result`) are already the JSON dumps of
+    WeighingReadingIn/WeighingResultOut from submit time — string-valued
+    Decimals already — so this only selects fields, nothing is re-parsed or
+    recomputed.
+    """
+    data = reading_row["data"]
+    result = result_row["result"]
+    return WeighingReadingRecordOut(
+        sequence_no=reading_row["sequence_no"],
+        direction=reading_row["direction"],
+        I=data["I"],
+        delta_l=data["delta_l"],
+        E0=data["E0"],
+        E=result["E"],
+        Ec=result["Ec"],
+        mpe=result["mpe"],
+        passed=result_row["passed"],
+    )
+
+
 def reading_to_engine_kwargs(reading: WeighingReadingIn) -> dict:
     """The engine-call seam, inbound: WeighingReadingIn -> the keyword
     arguments engine.weighing.compute_weighing_result expects. Every value on

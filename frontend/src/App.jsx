@@ -5,7 +5,9 @@ import { LoginPage } from "@/pages/LoginPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { InstrumentsListPage } from "@/pages/InstrumentsListPage";
 import { InstrumentRegisterPage } from "@/pages/InstrumentRegisterPage";
+import { InstrumentDetailPage } from "@/pages/InstrumentDetailPage";
 import { SessionPage } from "@/pages/SessionPage";
+import { WeighingSessionPage } from "@/pages/WeighingSessionPage";
 
 export default function App() {
   return (
@@ -17,7 +19,9 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/instruments" element={<InstrumentsListPage />} />
           <Route path="/instruments/new" element={<InstrumentRegisterPage />} />
+          <Route path="/instruments/:id" element={<InstrumentDetailPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
+          <Route path="/sessions/:id/weighing" element={<WeighingSessionPage />} />
         </Route>
       </Route>
 

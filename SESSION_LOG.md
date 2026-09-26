@@ -231,3 +231,33 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — instrument→session→test navigation with a session overview
+
+**Done:** Added the missing navigation layer: Instruments list → Instrument detail (its sessions) → Session overview (the 7-item checklist with statuses) → a test page. The verification-type choice now happens exactly once, at session creation, never when opening a test — removed the old flat path where clicking an instrument's "Start verification" immediately asked initial/subsequent and landed straight in the Weighing table.
+
+Backend (two new read-only GETs, schema/engine/readings-submission logic untouched):
+- `GET /api/sessions/{id}/weighing/readings` — every submitted Weighing reading paired with its computed result (`WeighingReadingRecordOut` in `app/contracts/weighing.py`, built by `reading_and_result_to_record_out` from the stored `test_readings.data`/`test_results.result` — never recomputed). Dedupes to the latest reading per `(sequence_no, direction)` by `created_at`, since there's no update endpoint and a resubmission is a second insert. New repo functions `readings_repo.list_readings`/`list_results`. RLS already allowed creator+approver/admin to select both tables — no new policy needed.
+- `GET /api/instruments/{id}/sessions` — an instrument's sessions, newest first, reusing `SessionOut`/`session_out_from_rows` rather than a slimmer duplicate contract. New repo function `sessions_repo.list_sessions_for_instrument`.
+- 6 new router tests (paired records, dedup-to-latest, orphan-reading defensiveness, 404s for both routes, sessions-list ordering) — full suite **186 passed** (was 180), purity still green, no schema/engine change.
+
+Frontend:
+- `InstrumentDetailPage.jsx` (new, `/instruments/:id`) — instrument header + its sessions list (`GET .../sessions`), "Start verification" (existing `StartVerificationDialog`, now triggered here instead of from the instruments list) creates a session and routes to its overview.
+- `InstrumentsListPage.jsx` — each row's action is now a "View" link to the instrument detail page, not an inline `StartVerificationDialog` trigger.
+- `SessionPage.jsx` (`/sessions/:id`) — rebuilt as the session overview: summary header card + the OIML clause 8.3.3 seven-item checklist (`TEST_ROWS`), each row's applicability computed client-side from the instrument (Discrimination N/A for digital, Tilting mobile-only, Sensitivity non-self-indicating-only — no `session_test_selection` rows exist yet for the five non-Weighing test_types, so this can't be server-derived until the Phase-3 test selector exists). Weighing's status (Not started/In progress/Complete+verdict) is derived from sequence-length×2 vs. readings-GET's count; the other five show "Coming soon"; `zero_tare` (no own `test_type` in the schema — tracked as a Weighing variant) is listed for completeness but never itself startable.
+- `WeighingSessionPage.jsx` (new, `/sessions/:id/weighing`) — the actual Weighing form, reached only from the overview's Start/Open button. Fetches session+instrument+sequence+readings in parallel and renders `WeighingFormTable` with the new `initialReadings` prop.
+- `WeighingFormTable.jsx` — added `initialReadings`; `cellsFromInitialReadings()` seeds the cells state (and `E0`) from it via a lazy `useState` initializer, so a page load/refresh reconstructs exactly what was already submitted — closes the "refresh loses progress" gap flagged in the previous task.
+- `App.jsx` — added `/instruments/:id` and `/sessions/:id/weighing` routes.
+- `npm run build` succeeds.
+
+Did not touch `engine/`, `db/schema.sql`, the readings-submission route/service, or any RLS policy. Did not build the other 6 test forms, the PDF, submit/approve, or the verify page. Updated `docs/architecture.md` (API surface: the two new GETs; Frontend: the full navigation rewrite, the pre-fill mechanism, and the closed readings-list gap) and its STATUS line.
+
+**Next:** Verify on the preview deploy (checklist in the branch reply). Then: the per-session test selector (Phase 3) to give the other five test_types real `session_test_selection` rows and eventually their own forms; the session/selection update endpoint for the still-local-only header-block fields; submit-for-review/approve/return; PDF; verify page.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

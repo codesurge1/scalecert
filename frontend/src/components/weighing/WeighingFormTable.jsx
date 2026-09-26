@@ -93,7 +93,35 @@ function FormCheckbox({ checked, onClick, label, readOnly }) {
  * OIML explanatory text is included beyond the form's own field labels and
  * structural chrome.
  */
-export function WeighingFormTable({ sessionId, sessionStatus, instrument, sequence, observerDefault }) {
+// Builds the cells map (see the `cells` state below) from
+// `GET .../weighing/readings` records, so a page load/refresh reconstructs
+// exactly what was already submitted instead of starting blank (closes the
+// gap docs/architecture.md previously flagged: no readings-list route).
+function cellsFromInitialReadings(initialReadings) {
+  const cells = {};
+  for (const record of initialReadings ?? []) {
+    cells[record.sequence_no] = {
+      ...cells[record.sequence_no],
+      [record.direction]: {
+        indication: record.I,
+        deltaL: record.delta_l,
+        result: { E: record.E, Ec: record.Ec, mpe: record.mpe, passed: record.passed },
+        submitting: false,
+        error: null,
+      },
+    };
+  }
+  return cells;
+}
+
+export function WeighingFormTable({
+  sessionId,
+  sessionStatus,
+  instrument,
+  sequence,
+  observerDefault,
+  initialReadings,
+}) {
   const disabled = sessionStatus !== "draft";
 
   const [testDate, setTestDate] = useState(todayIso());
@@ -105,11 +133,17 @@ export function WeighingFormTable({ sessionId, sessionStatus, instrument, sequen
   });
   const [zeroDeviceStatus, setZeroDeviceStatus] = useState("");
   const [initialZeroOver20, setInitialZeroOver20] = useState(null);
-  const [e0, setE0] = useState("0");
+  // Prefilled from the first already-submitted reading's E0 if any exist —
+  // E0 is one session-level value in this simplified model (no dedicated
+  // zero-capture step yet), so reopening a session should show the value
+  // actually used, not reset to the "0" default.
+  const [e0, setE0] = useState(initialReadings?.[0]?.E0 ?? "0");
   const [remarks, setRemarks] = useState("");
 
   // cells[sequence_no][apiDirection] = { indication, deltaL, result, submitting, error }
-  const [cells, setCells] = useState({});
+  // Lazily seeded from initialReadings once, on mount — this page is keyed
+  // per session, so it doesn't need to re-sync if the prop identity changes.
+  const [cells, setCells] = useState(() => cellsFromInitialReadings(initialReadings));
 
   function getCell(sequenceNo, apiDirection) {
     return (

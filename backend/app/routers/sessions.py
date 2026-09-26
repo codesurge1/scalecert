@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.contracts.common import SessionStatus, TestType
 from app.contracts.instrument import instrument_params_from_row
 from app.contracts.session import SessionIn, SessionOut, session_out_from_rows
-from app.contracts.weighing import WeighingReadingSubmitIn, WeighingResultOut, WeighingSequenceEntryOut
+from app.contracts.weighing import (
+    WeighingReadingRecordOut,
+    WeighingReadingSubmitIn,
+    WeighingResultOut,
+    WeighingSequenceEntryOut,
+    reading_and_result_to_record_out,
+)
 from app.deps import AuthContext, get_auth_context
 from app.repositories import instruments as instruments_repo
 from app.repositories import readings as readings_repo
@@ -67,6 +73,39 @@ def get_weighing_sequence(
         WeighingSequenceEntryOut(sequence_no=i, L=entry.L, m=entry.m, kind=entry.kind, mpe=entry.mpe)
         for i, entry in enumerate(sequence)
     ]
+
+
+@router.get("/{session_id}/weighing/readings", response_model=list[WeighingReadingRecordOut])
+def list_weighing_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[WeighingReadingRecordOut]:
+    """Read-only: every submitted Weighing reading for this session paired
+    with its computed result, so the client can reconstruct the R76-2 form
+    table on load — closing the "refresh loses progress" gap
+    (docs/architecture.md known-gaps). RLS-scoped like every other route:
+    creator + approver/admin see it, per the existing readings/results
+    select policies — no new policy needed, no schema change.
+    """
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+
+    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    # There's no update endpoint (docs/architecture.md) — resubmitting a
+    # direction inserts a second reading rather than overwriting the first.
+    # reading_rows is ordered by created_at, so this dict comprehension's
+    # last-write-wins semantics keep only the latest submission per
+    # (sequence_no, direction), matching what the form should actually show.
+    latest_by_key = {
+        (reading_row["sequence_no"], reading_row["direction"]): (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [reading_and_result_to_record_out(reading_row, result_row) for reading_row, result_row in latest_by_key.values()]
+    records.sort(key=lambda record: (record.sequence_no, record.direction.value))
+    return records
 
 
 @router.post("/{session_id}/weighing/readings", response_model=WeighingResultOut, status_code=201)

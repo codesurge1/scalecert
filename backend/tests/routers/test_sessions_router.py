@@ -103,6 +103,134 @@ def test_get_weighing_sequence_404_when_session_not_visible(monkeypatch):
     assert resp.status_code == 404
 
 
+def _reading_row(row_id, sequence_no, direction, created_at, *, I="300.4", delta_l="0.5", E0="0"):
+    return {
+        "id": row_id,
+        "session_id": "sess-1",
+        "test_type": "weighing",
+        "sequence_no": sequence_no,
+        "direction": direction,
+        "data": {
+            "accuracy_class": "III",
+            "verification_type": "initial",
+            "direction": direction,
+            "e": "1",
+            "L": "10",
+            "I": I,
+            "delta_l": delta_l,
+            "E0": E0,
+        },
+        "entered_by": _FAKE_AUTH.user_id,
+        "created_at": created_at,
+    }
+
+
+def _result_row(row_id, reading_id, *, E="0.4", Ec="0.4", mpe="0.5", passed=True):
+    return {
+        "id": row_id,
+        "session_id": "sess-1",
+        "test_type": "weighing",
+        "reading_id": reading_id,
+        "result": {
+            "accuracy_class": "III",
+            "verification_type": "initial",
+            "L": "10",
+            "I": "300.4",
+            "delta_l": "0.5",
+            "E0": "0",
+            "E": E,
+            "Ec": Ec,
+            "mpe": mpe,
+            "margin": "0.1",
+            "passed": passed,
+            "mpe_in_e": "0.5",
+            "band_lower_m": "0",
+            "band_upper_m": "500",
+        },
+        "passed": passed,
+        "computed_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_list_weighing_readings_returns_paired_records(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(
+        readings_repo,
+        "list_readings",
+        lambda client, **kwargs: [
+            _reading_row("r-up", 0, "up", "2026-01-01T00:00:00Z"),
+            _reading_row("r-down", 0, "down", "2026-01-01T00:00:01Z"),
+        ],
+    )
+    monkeypatch.setattr(
+        readings_repo,
+        "list_results",
+        lambda client, **kwargs: [
+            _result_row("res-up", "r-up"),
+            _result_row("res-down", "r-down"),
+        ],
+    )
+
+    resp = client.get("/api/sessions/sess-1/weighing/readings")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    assert {record["direction"] for record in body} == {"up", "down"}
+    assert all(record["sequence_no"] == 0 for record in body)
+    assert all(isinstance(record["E"], str) for record in body)  # never a JSON number
+
+
+def test_list_weighing_readings_dedupes_to_latest_per_sequence_and_direction(monkeypatch):
+    # Two "up" readings at sequence_no 0 (no update endpoint exists — a
+    # resubmission is a second insert). Only the later one (by created_at)
+    # should survive into the response.
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(
+        readings_repo,
+        "list_readings",
+        lambda client, **kwargs: [
+            _reading_row("r-old", 0, "up", "2026-01-01T00:00:00Z", I="300.4"),
+            _reading_row("r-new", 0, "up", "2026-01-01T00:00:05Z", I="300.6"),
+        ],
+    )
+    monkeypatch.setattr(
+        readings_repo,
+        "list_results",
+        lambda client, **kwargs: [
+            _result_row("res-old", "r-old", E="0.4", Ec="0.4"),
+            _result_row("res-new", "r-new", E="0.6", Ec="0.6", passed=False),
+        ],
+    )
+
+    resp = client.get("/api/sessions/sess-1/weighing/readings")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["I"] == "300.6"
+    assert body[0]["passed"] is False
+
+
+def test_list_weighing_readings_skips_readings_with_no_matching_result(monkeypatch):
+    # Defensive: the reading+result rollback (see submit_weighing_reading)
+    # should make this impossible in practice, but an orphan reading must
+    # never crash the endpoint or be silently invented a fake result.
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(
+        readings_repo, "list_readings", lambda client, **kwargs: [_reading_row("r-orphan", 0, "up", "2026-01-01T00:00:00Z")]
+    )
+    monkeypatch.setattr(readings_repo, "list_results", lambda client, **kwargs: [])
+
+    resp = client.get("/api/sessions/sess-1/weighing/readings")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_weighing_readings_404_when_session_not_visible(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: None)
+    resp = client.get("/api/sessions/sess-1/weighing/readings")
+    assert resp.status_code == 404
+
+
 def test_submit_reading_rejects_when_not_draft(monkeypatch):
     monkeypatch.setattr(
         sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted")

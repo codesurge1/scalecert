@@ -32,6 +32,33 @@ def insert_reading(
     return rows[0]
 
 
+def list_readings(client: Client, *, session_id: str, test_type: str) -> list[dict]:
+    # Ordered by created_at so the router can do last-write-wins dedup on
+    # (sequence_no, direction) if a direction was ever resubmitted — there's
+    # no update endpoint, so a resubmission is a second insert, not an
+    # overwrite (docs/architecture.md).
+    return (
+        client.table(READINGS_TABLE)
+        .select("*")
+        .eq("session_id", session_id)
+        .eq("test_type", test_type)
+        .order("created_at")
+        .execute()
+        .data
+    )
+
+
+def list_results(client: Client, *, session_id: str, test_type: str) -> list[dict]:
+    return (
+        client.table(RESULTS_TABLE)
+        .select("*")
+        .eq("session_id", session_id)
+        .eq("test_type", test_type)
+        .execute()
+        .data
+    )
+
+
 def delete_reading(client: Client, reading_id: str) -> None:
     client.table(READINGS_TABLE).delete().eq("id", reading_id).execute()
 
