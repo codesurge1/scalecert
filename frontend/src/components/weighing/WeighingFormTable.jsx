@@ -1,30 +1,18 @@
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 // Direction mapping — explicit and intentional, do not "simplify" this away.
-// The OIML R 76-2 form prints two columns per quantity, headed with the
+// The OIML R 76-2 form prints two sub-columns per quantity, headed with the
 // glyphs "↓" and "↑" (increasing load, then decreasing load). This app's API
 // names directions semantically instead ("up" = increasing, "down" =
-// decreasing). So: the form's "↓" column is the increasing-load pass, i.e.
-// API direction "up"; the form's "↑" column is the decreasing-load pass,
-// i.e. API direction "down". The glyph-to-API mapping is deliberately
+// decreasing). So: the form's "↓" sub-column is the increasing-load pass,
+// i.e. API direction "up"; the form's "↑" sub-column is the decreasing-load
+// pass, i.e. API direction "down". The glyph-to-API mapping is deliberately
 // crossed like this and must stay exactly as specified.
 const FORM_COLUMNS = [
-  { glyph: "↓", apiDirection: "up", label: "Increasing (↓)" },
-  { glyph: "↑", apiDirection: "down", label: "Decreasing (↑)" },
+  { glyph: "↓", apiDirection: "up" },
+  { glyph: "↑", apiDirection: "down" },
 ];
 
 const ZERO_DEVICE_OPTIONS = [
@@ -34,140 +22,76 @@ const ZERO_DEVICE_OPTIONS = [
   { value: "in_operation", label: "In operation" },
 ];
 
+const ENV_ROWS = [
+  { key: "temp", label: "Temp.:", unit: "°C" },
+  { key: "relH", label: "Rel. h.:", unit: "%" },
+  { key: "time", label: "Time:", unit: "" },
+  { key: "barPres", label: "Bar. pres.:", unit: "hPa", note: "(only class I)" },
+];
+
+const ENV_COLS = [
+  { key: "start", label: "At start" },
+  { key: "max", label: "At max" },
+  { key: "end", label: "At end" },
+];
+
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function fmt(value) {
-  return value === undefined || value === null || value === "" ? "—" : value;
+  return value === undefined || value === null || value === "" ? "" : value;
 }
 
-/**
- * One environmental-conditions row (Temp / Rel.h / Time / Bar.pres for one
- * of "At start" / "At max" / "At end"). Local-only state — see the header-
- * block note below on why this can't be persisted yet.
- */
-function EnvRow({ rowLabel, values, onChange, disabled }) {
+/** A label + dotted fill-in line, matching the form's "Label: …………" rows. */
+function FormLine({ label, value, editable, disabled, onChange }) {
   return (
-    <TableRow>
-      <TableCell className="text-xs font-medium text-muted-foreground">{rowLabel}</TableCell>
-      {["temp", "relH", "time", "barPres"].map((field) => (
-        <TableCell key={field} className="p-1.5">
-          <Input
-            className="h-8 text-sm"
-            value={values[field]}
-            disabled={disabled}
-            onChange={(event) => onChange(field, event.target.value)}
-          />
-        </TableCell>
-      ))}
-    </TableRow>
+    <div className="flex items-baseline gap-2">
+      <span className="shrink-0">{label}</span>
+      {editable ? (
+        <input
+          className="min-w-0 flex-1 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-sm focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <span className="min-w-0 flex-1 truncate border-b border-dotted border-neutral-500 px-1 text-sm">
+          {value || " "}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** A square ☐-style checkbox, matching the form's tick-box controls. Used
+ * both interactively (zero-device / initial-zero radios) and read-only (the
+ * Passed/Failed boxes, which reflect the computed verdict rather than a
+ * manual click). */
+function FormCheckbox({ checked, onClick, label, readOnly }) {
+  return (
+    <span
+      role={readOnly ? undefined : "checkbox"}
+      aria-checked={checked}
+      onClick={readOnly ? undefined : onClick}
+      className={`flex items-center gap-2 text-sm ${readOnly ? "" : "cursor-pointer"}`}
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center border border-neutral-900">
+        {checked ? <span className="h-2.5 w-2.5 bg-neutral-900" /> : null}
+      </span>
+      {label}
+    </span>
   );
 }
 
 /**
- * One direction's editable I/ΔL cell-pair plus its computed E/Ec, for one
- * load row. Submission happens on blur of the ΔL field (the natural second
- * stop in the I -> ΔL tab order) or Enter in either field — a per-cell
- * "compute" click was the other option the task left open, but blur/Enter
- * needs no extra chrome in an already-dense table.
- */
-function DirectionCells({ sessionId, sessionStatus, entry, column, cellState, e0, onCellChange, onResult }) {
-  const disabled = sessionStatus !== "draft";
-  const { indication, deltaL, result, submitting, error } = cellState;
-
-  async function submit() {
-    if (indication === "" || disabled) return;
-    onCellChange({ submitting: true, error: null });
-    // Decimal-as-string discipline (CLAUDE.md, backend StrictDecimal
-    // contract): indication/deltaL are the raw string values typed into
-    // these <input>s, sent to the API exactly as typed — never passed
-    // through Number()/parseFloat() first, since a JS `number` is a float
-    // and e.g. "300.6" must never round-trip through one before reaching
-    // the Decimal-based engine.
-    const payload = {
-      sequence_no: entry.sequence_no,
-      direction: column.apiDirection,
-      I: indication,
-      delta_l: deltaL === "" ? "0" : deltaL,
-      E0: e0,
-    };
-    try {
-      const res = await apiFetch(`/sessions/${sessionId}/weighing/readings`, {
-        method: "POST",
-        body: payload,
-      });
-      onResult(res);
-      onCellChange({ submitting: false, error: null });
-    } catch (err) {
-      const message =
-        err instanceof ApiError && err.status === 409
-          ? "Session is no longer in draft — locked."
-          : err.message;
-      onCellChange({ submitting: false, error: message });
-      toast.error(`Load #${entry.sequence_no} (${column.label}): ${message}`);
-    }
-  }
-
-  function handleKeyDown(event) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      submit();
-    }
-  }
-
-  return (
-    <>
-      <TableCell className="border-l p-1.5" title={error ?? undefined}>
-        <Input
-          className={`h-8 w-24 text-sm ${error ? "border-destructive" : ""}`}
-          inputMode="decimal"
-          disabled={disabled}
-          value={indication}
-          placeholder="I"
-          onChange={(event) => onCellChange({ indication: event.target.value })}
-          onKeyDown={handleKeyDown}
-        />
-      </TableCell>
-      <TableCell className="p-1.5">
-        <Input
-          className="h-8 w-20 text-sm"
-          inputMode="decimal"
-          disabled={disabled}
-          value={deltaL}
-          placeholder="ΔL"
-          onChange={(event) => onCellChange({ deltaL: event.target.value })}
-          onBlur={submit}
-          onKeyDown={handleKeyDown}
-        />
-      </TableCell>
-      <TableCell
-        className={`p-1.5 text-right font-mono text-sm ${
-          result ? (result.passed ? "text-success" : "text-destructive") : "text-muted-foreground"
-        }`}
-      >
-        {submitting ? "…" : fmt(result?.E)}
-      </TableCell>
-      <TableCell
-        className={`p-1.5 text-right font-mono text-sm ${
-          result ? (result.passed ? "text-success" : "text-destructive") : "text-muted-foreground"
-        }`}
-      >
-        {fmt(result?.Ec)}
-      </TableCell>
-    </>
-  );
-}
-
-/**
- * The OIML R 76-2 "1 Weighing performance" entry screen — a single table the
- * technician types directly into, reproducing that form's field layout
- * (header block, environmental conditions, the ↓/↑ paired-column data table,
- * the E = I + ½e − ΔL − L / Ec = E − E0 formula line, and the overall
- * |Ec| ≤ mpe verdict box) faithfully. This is a faithful reproduction of the
- * FORMAT of that OIML form for data-entry purposes, not a copy of the
- * copyrighted OIML document itself — no OIML text, numbering, or branding
- * beyond the field layout is reproduced.
+ * The OIML R 76-2 "1 Weighing performance" entry screen — a visual
+ * reproduction of the standard's page-10 form (header block, environmental
+ * grid, zero-device/initial-zero lines, the E/Ec formula, the ↓/↑ data
+ * table, and the Passed/Failed + Remarks footer), reproduced for data-entry
+ * fidelity only, not a copy of the copyrighted OIML document itself — no
+ * OIML explanatory text is included beyond the form's own field labels and
+ * structural chrome.
  */
 export function WeighingFormTable({ sessionId, sessionStatus, instrument, sequence, observerDefault }) {
   const disabled = sessionStatus !== "draft";
@@ -209,17 +133,59 @@ export function WeighingFormTable({ sessionId, sessionStatus, instrument, sequen
     }));
   }
 
-  function setResult(sequenceNo, apiDirection, result) {
-    setCells((prev) => ({
-      ...prev,
-      [sequenceNo]: {
-        ...prev[sequenceNo],
-        [apiDirection]: { ...getCell(sequenceNo, apiDirection), result },
-      },
-    }));
+  // Submission happens on blur of the ΔL input (the natural second stop in
+  // the I -> ΔL tab order) or Enter in either field — a per-cell "compute"
+  // click was the other option the task left open, but blur/Enter needs no
+  // extra chrome on an already-dense, form-styled table.
+  async function submitDirection(entry, apiDirection) {
+    const cell = getCell(entry.sequence_no, apiDirection);
+    if (cell.indication === "" || disabled) return;
+    updateCell(entry.sequence_no, apiDirection, { submitting: true, error: null });
+    // Decimal-as-string discipline (CLAUDE.md, backend StrictDecimal
+    // contract): indication/deltaL/e0 are the raw string values typed into
+    // these <input>s, sent to the API exactly as typed — never passed
+    // through Number()/parseFloat() first, since a JS `number` is a float
+    // and e.g. "300.6" must never round-trip through one before reaching
+    // the Decimal-based engine.
+    const payload = {
+      sequence_no: entry.sequence_no,
+      direction: apiDirection,
+      I: cell.indication,
+      delta_l: cell.deltaL === "" ? "0" : cell.deltaL,
+      E0: e0,
+    };
+    try {
+      const res = await apiFetch(`/sessions/${sessionId}/weighing/readings`, {
+        method: "POST",
+        body: payload,
+      });
+      setCells((prev) => ({
+        ...prev,
+        [entry.sequence_no]: {
+          ...prev[entry.sequence_no],
+          [apiDirection]: { ...getCell(entry.sequence_no, apiDirection), result: res, submitting: false, error: null },
+        },
+      }));
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? "Session is no longer in draft — locked."
+          : err.message;
+      updateCell(entry.sequence_no, apiDirection, { submitting: false, error: message });
+      toast.error(`Load #${entry.sequence_no} (${apiDirection}): ${message}`);
+    }
   }
 
-  const resolutionDuringTest = instrument?.d_value ?? instrument?.e_value ?? "—";
+  function handleEnter(entry, apiDirection) {
+    return (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitDirection(entry, apiDirection);
+      }
+    };
+  }
+
+  const resolutionDuringTest = instrument?.d_value ?? instrument?.e_value ?? "";
 
   const rowVerdicts = useMemo(() => {
     return sequence.map((entry) => {
@@ -237,229 +203,252 @@ export function WeighingFormTable({ sessionId, sessionStatus, instrument, sequen
     return "INCOMPLETE";
   }, [rowVerdicts]);
 
+  function inputCell(entry, apiDirection, field) {
+    const cell = getCell(entry.sequence_no, apiDirection);
+    return (
+      <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
+        <input
+          className={`h-7 w-full border-0 bg-transparent px-1 text-center text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60 ${
+            cell.error ? "bg-red-50" : ""
+          }`}
+          inputMode="decimal"
+          disabled={disabled}
+          value={field === "indication" ? cell.indication : cell.deltaL}
+          onChange={(event) =>
+            updateCell(entry.sequence_no, apiDirection, { [field]: event.target.value })
+          }
+          onBlur={field === "deltaL" ? () => submitDirection(entry, apiDirection) : undefined}
+          onKeyDown={handleEnter(entry, apiDirection)}
+        />
+      </td>
+    );
+  }
+
+  function computedCell(entry, apiDirection, field) {
+    const cell = getCell(entry.sequence_no, apiDirection);
+    const value = cell.result?.[field];
+    const colorClass = cell.result
+      ? cell.result.passed
+        ? "text-emerald-700"
+        : "text-red-700 font-semibold"
+      : "text-neutral-500";
+    return (
+      <td className={`border border-neutral-900 px-1 py-1 text-center text-xs ${colorClass}`}>
+        {cell.submitting ? "…" : fmt(value)}
+      </td>
+    );
+  }
+
   return (
-    <div className="grid gap-6">
-      <Card className="border-2">
-        <div className="border-b bg-muted/40 px-6 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide">
-            1 Weighing performance
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            OIML R 76-2 weighing-performance format — reproduced for data entry only, not a copy of
-            the OIML document itself.
-          </p>
+    <div className="grid gap-3">
+      <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+          <span>OIML R 76-2: 2007 (E)</span>
+          <span>Report page &hellip;./&hellip;.</span>
         </div>
 
-        <div className="grid gap-4 p-6">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Field label="Application no.">{fmt(instrument?.application_no)}</Field>
-            <Field label="Type designation">{fmt(instrument?.type_designation)}</Field>
-            <Field label="Date" editable disabled={disabled} value={testDate} onChange={setTestDate} />
-            <Field label="Observer" editable disabled={disabled} value={observer} onChange={setObserver} />
-            <Field label="Verification scale interval e">{fmt(instrument?.e_value)}</Field>
-            <Field label="Resolution during test (< e)">{fmt(resolutionDuringTest)}</Field>
+        <h2 className="text-sm font-bold">1&nbsp;&nbsp;&nbsp;WEIGHING PERFORMANCE (A.4.4) (A.5.3.1)</h2>
+        <p className="ml-8 text-sm">(Calculation of the error)</p>
+
+        <div className="mt-5 grid gap-x-8 gap-y-1.5 sm:grid-cols-2">
+          <div className="grid gap-1.5">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Date:" value={testDate} editable disabled={disabled} onChange={setTestDate} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
           </div>
 
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead />
-                  <TableHead>Temp.</TableHead>
-                  <TableHead>Rel. h.</TableHead>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Bar. pres. (class I only)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <EnvRow
-                  rowLabel="At start"
-                  values={env.start}
-                  disabled={disabled}
-                  onChange={(field, value) => setEnv((prev) => ({ ...prev, start: { ...prev.start, [field]: value } }))}
-                />
-                <EnvRow
-                  rowLabel="At max"
-                  values={env.max}
-                  disabled={disabled}
-                  onChange={(field, value) => setEnv((prev) => ({ ...prev, max: { ...prev.max, [field]: value } }))}
-                />
-                <EnvRow
-                  rowLabel="At end"
-                  values={env.end}
-                  disabled={disabled}
-                  onChange={(field, value) => setEnv((prev) => ({ ...prev, end: { ...prev.end, [field]: value } }))}
-                />
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Label className="text-xs">Automatic zero-setting and zero-tracking device is:</Label>
-              <div className="mt-1.5 flex flex-wrap gap-3">
-                {ZERO_DEVICE_OPTIONS.map((opt) => (
-                  <label key={opt.value} className="flex items-center gap-1.5 text-sm">
-                    <input
-                      type="radio"
-                      name="zero-device-status"
-                      disabled={disabled}
-                      checked={zeroDeviceStatus === opt.value}
-                      onChange={() => setZeroDeviceStatus(opt.value)}
-                    />
-                    {opt.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Initial zero-setting &gt; 20% of Max:</Label>
-              <div className="mt-1.5 flex gap-3">
-                {["yes", "no"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-sm capitalize">
-                    <input
-                      type="radio"
-                      name="initial-zero-over-20"
-                      disabled={disabled}
-                      checked={initialZeroOver20 === opt}
-                      onChange={() => setInitialZeroOver20(opt)}
-                    />
-                    {opt}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            The header fields above (Date, Observer, environmental conditions, zero-device status,
-            initial-zero-setting flag) are entered here but not yet persisted to the session record —
-            there is no session-update endpoint yet (tracked gap; see docs/architecture.md). They
-            reset on page reload.
-          </p>
-        </div>
-      </Card>
-
-      <Card className="border-2">
-        <div className="border-b bg-muted/40 px-6 py-3">
-          <p className="font-mono text-xs">E = I + ½e − ΔL − L</p>
-          <p className="font-mono text-xs">Ec = E − E0 (E0 = error calculated at or near zero)</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 border-b px-6 py-3">
-          <Label htmlFor="e0" className="text-sm font-semibold">
-            E0 (zero-point error), g
-          </Label>
-          <Input
-            id="e0"
-            className="h-8 w-32"
-            inputMode="decimal"
-            disabled={disabled}
-            value={e0}
-            onChange={(event) => setE0(event.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Captured once per session (simplification pending a dedicated zero-capture step).
-          </p>
-        </div>
-
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead rowSpan={2} className="border-r align-bottom">Load L</TableHead>
-                {FORM_COLUMNS.map((col) => (
-                  <TableHead key={col.glyph} colSpan={4} className="border-l text-center">
-                    {col.glyph}
-                  </TableHead>
-                ))}
-                <TableHead rowSpan={2} className="border-l align-bottom text-center">Result</TableHead>
-              </TableRow>
-              <TableRow>
-                {FORM_COLUMNS.map((col) => (
-                  <Fragment key={col.glyph}>
-                    <TableHead className="border-l text-center">Indication I</TableHead>
-                    <TableHead className="text-center">Add. load ΔL</TableHead>
-                    <TableHead className="text-center">Error E</TableHead>
-                    <TableHead className="text-center">Corr. err Ec</TableHead>
-                  </Fragment>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sequence.map((entry) => {
-                const verdict = rowVerdicts.find((r) => r.sequence_no === entry.sequence_no);
-                return (
-                  <TableRow key={entry.sequence_no}>
-                    <TableCell className="border-r font-medium">
-                      {entry.L}
-                      <div className="text-xs text-muted-foreground">mpe ±{entry.mpe}</div>
-                    </TableCell>
-                    {FORM_COLUMNS.map((col) => (
-                      <DirectionCells
-                        key={col.apiDirection}
-                        sessionId={sessionId}
-                        sessionStatus={sessionStatus}
-                        entry={entry}
-                        column={col}
-                        cellState={getCell(entry.sequence_no, col.apiDirection)}
-                        e0={e0}
-                        onCellChange={(patch) => updateCell(entry.sequence_no, col.apiDirection, patch)}
-                        onResult={(result) => setResult(entry.sequence_no, col.apiDirection, result)}
-                      />
+          <div>
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  <th className="border border-neutral-900 px-2 py-1" />
+                  {ENV_COLS.map((col) => (
+                    <th key={col.key} className="border border-neutral-900 px-2 py-1 font-normal">
+                      {col.label}
+                    </th>
+                  ))}
+                  <th className="border border-neutral-900 px-1 py-1" />
+                </tr>
+              </thead>
+              <tbody>
+                {ENV_ROWS.map((row) => (
+                  <tr key={row.key}>
+                    <td className="border border-neutral-900 px-2 py-1 align-top">
+                      {row.label}
+                      {row.note ? <div className="text-[10px] italic text-neutral-600">{row.note}</div> : null}
+                    </td>
+                    {ENV_COLS.map((col) => (
+                      <td key={col.key} className="border border-neutral-900 p-0">
+                        <input
+                          className="h-6 w-full border-0 bg-transparent px-1 text-center text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+                          disabled={disabled}
+                          value={env[col.key][row.key]}
+                          onChange={(event) =>
+                            setEnv((prev) => ({
+                              ...prev,
+                              [col.key]: { ...prev[col.key], [row.key]: event.target.value },
+                            }))
+                          }
+                        />
+                      </td>
                     ))}
-                    <TableCell className="border-l text-right">
-                      {verdict.complete ? (
-                        <Badge variant={verdict.failed ? "destructive" : "success"}>
-                          {verdict.failed ? "FAIL" : "PASS"}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-muted-foreground">Pending</Badge>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                    <td className="border border-neutral-900 px-1 py-1">{row.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-6 py-4">
-          <p className="text-sm font-medium">Check if |Ec| ≤ |mpe|</p>
-          <Badge
-            variant={overall === "PASSED" ? "success" : overall === "FAILED" ? "destructive" : "warning"}
-            className="text-sm"
-          >
-            {overall}
-          </Badge>
+        <div className="mt-5">
+          <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+          <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
+            {ZERO_DEVICE_OPTIONS.map((opt) => (
+              <FormCheckbox
+                key={opt.value}
+                label={opt.label}
+                checked={zeroDeviceStatus === opt.value}
+                onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+              />
+            ))}
+          </div>
         </div>
-      </Card>
 
-      <Card>
-        <div className="p-6">
-          <Label htmlFor="remarks" className="text-sm font-semibold">Remarks</Label>
+        <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+          <p className="text-sm">Initial zero-setting &gt; 20 % of Max:</p>
+          <FormCheckbox
+            label="Yes"
+            checked={initialZeroOver20 === "yes"}
+            onClick={() => !disabled && setInitialZeroOver20("yes")}
+          />
+          <FormCheckbox
+            label="No  (see R 76-1, A.4.4.2)"
+            checked={initialZeroOver20 === "no"}
+            onClick={() => !disabled && setInitialZeroOver20("no")}
+          />
+        </div>
+
+        <div className="mt-5 text-sm">
+          <p>
+            <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>
+          </p>
+          <p>
+            <i>E</i>
+            <sub>c</sub> = <i>E</i> − <i>E</i>
+            <sub>0</sub> with <i>E</i>
+            <sub>0</sub> = error calculated at or near zero*
+          </p>
+          <div className="mt-1 flex items-baseline gap-2 text-xs text-neutral-700">
+            <span>
+              * <i>E</i>
+              <sub>0</sub> =
+            </span>
+            <input
+              className="w-24 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-center focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
+              inputMode="decimal"
+              disabled={disabled}
+              value={e0}
+              onChange={(event) => setE0(event.target.value)}
+            />
+            <span>g — entered here; no dedicated zero-capture step yet (tracked gap).</span>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-xs">
+            <thead>
+              <tr>
+                <th rowSpan={2} className="border border-neutral-900 px-2 py-1 align-middle">
+                  Load, <i>L</i>
+                </th>
+                <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  Indication, <i>I</i>
+                </th>
+                <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  Add. load,
+                  <br />Δ<i>L</i>
+                </th>
+                <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  Error, <i>E</i>
+                </th>
+                <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  Corrected error, <i>E</i>
+                  <sub>c</sub>
+                </th>
+                <th rowSpan={2} className="border border-neutral-900 px-2 py-1 align-middle">
+                  mpe
+                </th>
+              </tr>
+              <tr>
+                {["I", "dL", "E", "Ec"].flatMap((group) =>
+                  FORM_COLUMNS.map((col) => (
+                    <th key={`${group}-${col.apiDirection}`} className="border border-neutral-900 px-1 py-1 font-normal">
+                      {col.glyph}
+                    </th>
+                  )),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {sequence.map((entry) => (
+                <tr key={entry.sequence_no}>
+                  <td className="border border-neutral-900 px-2 py-1 text-right">{entry.L}</td>
+                  {FORM_COLUMNS.map((col) => (
+                    <Fragment key={`I-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "indication")}</Fragment>
+                  ))}
+                  {FORM_COLUMNS.map((col) => (
+                    <Fragment key={`dL-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "deltaL")}</Fragment>
+                  ))}
+                  {FORM_COLUMNS.map((col) => (
+                    <Fragment key={`E-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "E")}</Fragment>
+                  ))}
+                  {FORM_COLUMNS.map((col) => (
+                    <Fragment key={`Ec-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "Ec")}</Fragment>
+                  ))}
+                  <td className="border border-neutral-900 px-2 py-1 text-right">{entry.mpe}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-5">
+          <p className="text-sm">
+            Check if |<i>E</i>
+            <sub>c</sub>| ≤ |mpe|
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-8 gap-y-2">
+            <FormCheckbox label="Passed" checked={overall === "PASSED"} readOnly />
+            <FormCheckbox label="Failed" checked={overall === "FAILED"} readOnly />
+            {overall === "INCOMPLETE" ? (
+              <span className="text-xs italic text-neutral-600">
+                Incomplete — not every load's both directions have been entered yet.
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <p className="text-sm">Remarks:</p>
           <textarea
-            id="remarks"
-            className="mt-1.5 flex min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-1 min-h-16 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
             disabled={disabled}
             value={remarks}
             onChange={(event) => setRemarks(event.target.value)}
           />
         </div>
-      </Card>
-    </div>
-  );
-}
+      </div>
 
-function Field({ label, children, editable, disabled, value, onChange }) {
-  return (
-    <div className="grid gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      {editable ? (
-        <Input className="h-8" disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} />
-      ) : (
-        <span className="text-sm font-medium">{children}</span>
-      )}
+      <p className="mx-auto max-w-4xl text-xs text-muted-foreground">
+        Reproduced for data-entry fidelity to OIML R 76-2's page-10 "Weighing performance" form —
+        not a copy of the copyrighted OIML document itself. Header fields above (Date, Observer,
+        environmental conditions, zero-device status, initial-zero-setting flag, Remarks) are local
+        to this page only — there is no session-update endpoint yet (tracked gap; see
+        docs/architecture.md) — and reset on reload.
+      </p>
     </div>
   );
 }

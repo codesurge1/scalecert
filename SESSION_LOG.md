@@ -203,3 +203,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — Weighing screen: visual fidelity pass against the real R 76-2 page-10 form
+
+**Done:** The prior form-table pass had the right fields but read as an app-styled table, not the official form. Installed `poppler-utils` into this sandbox (unavailable in the earlier task, worked around then via `pypdf` text extraction) and read the OIML R 76-2 PDF's page 10 as a rendered image — the actual source, not a text reconstruction — then rebuilt `WeighingFormTable.jsx` to match it precisely: a bordered white "sheet" (serif font, black rules, no rounded corners, centered, outside the app's shadcn styling but still inside the app shell/nav) reproducing the masthead ("OIML R 76-2: 2007 (E)" / "Report page …./…."), the bold title and "(Calculation of the error)" subtitle, a two-column header block (dotted fill-in lines for Application no./Type designation/Date/Observer/e/resolution, plus the environmental grid — corrected to the form's real orientation: rows Temp./Rel.h./Time/Bar.pres., columns At start/At max/At end, since the prior pass had this transposed), the zero-device and initial-zero-setting lines as ☐-style square checkboxes, the formula block printed verbatim with the E0 footnote asterisk, and the main table rebuilt to the form's actual 10-column, quantity-major order (Indication↓↑, Add.load↓↑, Error↓↑, Corrected error↓↑, then a single un-split mpe column) — the prior pass had grouped columns by direction instead of by quantity, which worked but didn't match the source, and had an extra "Result" badge column not present on the real form (dropped; pass/fail is now conveyed via the colored Ec cells, same as the form implies). Direction mapping (↓=increasing/API "up", ↑=decreasing/API "down") is unchanged and still documented in-code at `FORM_COLUMNS`. All prior functionality preserved exactly: submit-on-ΔL-blur-or-Enter, live E/Ec fill-in with pass/fail coloring, the overall PASSED/FAILED/INCOMPLETE check (now read-only Passed/Failed boxes matching the form, with an INCOMPLETE caption alongside since the paper form has no such state), Remarks, decimal-as-string discipline throughout, and the two previously-flagged gaps (no session-update endpoint, no readings-list endpoint) — both still noted in a caption below the sheet rather than inside it, so the sheet itself stays a clean reproduction. `npm run build` succeeds. Did not touch backend/engine/vercel.json, `SessionPage.jsx`, or any other screen. Updated `docs/architecture.md`'s Frontend section.
+
+**Next:** Verify on the preview deploy (checklist in the branch reply) — in particular that the quantity-major column reordering didn't regress which cell a given ↓/↑ input actually submits to. Then submit-for-review/approve/return, PDF generation (can now reuse this exact visual layout directly), and the public verify page.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
