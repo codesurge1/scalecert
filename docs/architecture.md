@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, session lifecycle (as of ADR-0005), engine design (Weighing calculation + load-sequence generator), the Weighing contracts/API-validation layer, and the API surface (instruments/sessions/Weighing readings — DB-integration verified via preview only, not in-sandbox) are authoritative. PDF and audit are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), engine design (Weighing calculation + load-sequence generator), the Weighing contracts/API-validation layer, the API surface (instruments/sessions/Weighing readings — DB-integration verified via preview only, not in-sandbox), and the frontend foundation (Tailwind/shadcn design system, auth, app shell, Instrument Registration screen) are authoritative. PDF and audit are pending their build tasks.
 
 ## System overview
 
@@ -118,6 +118,24 @@ Every route depends on `app.deps.get_auth_context` (`Depends(get_auth_context)`)
 **Known follow-up, not solved here.** `engine/` lives outside `backend/`'s own Vercel-service root (flagged when the Weighing contracts were added) — these routes now actually call `engine.load_sequence`/`engine.weighing` at request time, so this needs resolving before a real deploy, not just before a real route existed.
 
 **Testing note.** This sandbox has no egress to a live Supabase project. The pure logic — contract validation, the engine↔contract adapters, the `sequence_no → L` lookup, the not-draft rule — is unit-tested directly (`backend/tests/services/`, `backend/tests/contracts/`). The routes themselves are tested with the entire DB layer mocked (`backend/tests/routers/`) via `app.dependency_overrides` (for auth) and `monkeypatch` (for `app.repositories.*`) — this proves the routing/error-code/orchestration logic, not that the real SQL against the real schema behaves as expected. That needs the preview deploy (see SESSION_LOG.md for the verification steps).
+
+## Frontend
+
+**Stack.** Vite + React (already in place), now with Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first config — no `tailwind.config.js`) and shadcn/ui, `react-router-dom` for routing, `react-hook-form` for forms, and `sonner` for toasts. `ui.shadcn.com` is unreachable from this sandbox (egress-blocked, same as `vercel.com`), so the shadcn CLI (`init`/`add`) could not be run; the `components/ui/*.jsx` files were written by hand to shadcn's own standard shape (same props, same class names, same `cn()`-based composition) so a future `npx shadcn add <component>` in an environment with network access still targets the same structure without conflicting. `components.json` is committed for that reason even though it was never used to generate anything here.
+
+**Design tokens** (`src/index.css`, `@theme inline`) — one deliberate choice per rule, each changeable in one place: a restrained deep slate-blue `--primary` (official/regulatory, not a startup gradient); slate-based (cool) neutrals for `--background`/`--muted`/`--border`; a small `--radius` (6px, closer to a form than a consumer app); semantic `--success`/`--warning`/`--destructive` tokens kept separate from `--primary` so a pass/fail/pending badge is never visually confused with a call-to-action button; Tailwind's default system sans stack for typography (no external font fetch, so no added network dependency). No dark mode yet — a second `.dark` block is the only change needed to add one later.
+
+**App shell** (`src/components/AppShell.jsx`) — the one layout every authenticated screen renders inside via a nested `<Outlet/>` route: a top bar (wordmark, nav, the signed-in user's email + role badge, logout) and a content area. `PageHeader` (same file) is the consistent title-area component every screen starts with.
+
+**Auth** (`src/lib/supabase.js`, `src/components/AuthGate.jsx`) — a single Supabase client module; `useSession()` is a reactive hook over `getSession()` + `onAuthStateChange` (login, logout, and token refresh all flow through the same state). `AuthGate` is a layout route: `session === undefined` (initial check still in flight) renders a loading skeleton — never a redirect flash; `null` redirects to `/login`; otherwise renders the gated routes. The login screen itself uses `signInWithPassword` and shows Supabase's own error message on failure.
+
+**API helper** (`src/lib/api.js`, `apiFetch`) — every `/api` call goes through this one function, which reads the current session and attaches `Authorization: Bearer <access_token>` automatically; callers never thread a token through by hand. Same-origin `/api` by default (matching the backend's own mount path), overridable via `VITE_API_BASE` for local dev exactly as the walking skeleton already established.
+
+**Decimal-as-string on the client, carrying the backend's rule forward.** The backend's `StrictDecimal` contract (see above) rejects a bare float outright. On the client this means every numeric form field (`e_value`, `d_value`, `max_capacity`, `min_capacity`) is kept as the string value react-hook-form already holds it as, from the input all the way to the `fetch` body — `Number()`/`parseFloat()` never appears in `InstrumentRegisterPage.jsx`'s submit handler, by design, with a comment at the call site saying why. `apiFetch` itself does no coercion either; it only serializes whatever shape it's handed, so the discipline has to hold at each call site, not inside a shared helper that could silently paper over a mistake.
+
+**The one real screen (proves the stack): Instrument Registration.** `/instruments` lists the caller's instruments (`GET /api/instruments`) in a shadcn `Table`, with three distinct states — loading (skeleton), empty (a message + link, not just a blank table), and error (an inline retry card, not a silent failure) — the pattern every future list screen copies. `/instruments/new` is a shadcn `Form` (react-hook-form) posting to `POST /api/instruments`; on success it toasts and navigates back to the list, on a 422 it renders the Pydantic validation detail inline, readably.
+
+**Not built here (later tasks):** session/reading/verify/approve screens. `frontend/public/apitest.html` (the throwaway manual-test harness) is untouched — a separate cleanup task removes it once these real screens make it redundant.
 
 ## PDF & audit
 

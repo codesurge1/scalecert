@@ -1,3 +1,111 @@
-body {
-  margin: 0;
+@import "tailwindcss";
+
+/*
+ * ScaleCert design tokens — gov-grade institutional.
+ *
+ * One deliberate choice per rule, changeable in one place:
+ * - Primary is a restrained deep slate-blue (official/regulatory), not a
+ *   startup gradient. Semantic status colors are separate from primary so a
+ *   pass/fail/pending badge never gets confused with a call-to-action.
+ * - Neutrals are slate-based (cool gray), not warm gray — reads as clinical
+ *   and calm rather than friendly.
+ * - Radius is small (6px) — closer to a form/document than a consumer app.
+ * - No dark mode yet: a single, deliberately legible light theme. Adding a
+ *   `.dark` variant later only means adding a second block here.
+ * - Typography is Tailwind's default system sans stack (no external font
+ *   fetch) — clean and legible without adding a network dependency.
+ */
+:root {
+  --radius: 0.375rem;
+
+  --background: oklch(0.99 0.002 247);
+  --foreground: oklch(0.19 0.02 254);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.19 0.02 254);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.19 0.02 254);
+
+  /* Deep slate-blue — the institutional primary. */
+  --primary: oklch(0.32 0.06 255);
+  --primary-foreground: oklch(0.98 0.003 247);
+
+  --secondary: oklch(0.95 0.01 253);
+  --secondary-foreground: oklch(0.24 0.03 255);
+
+  --muted: oklch(0.96 0.006 250);
+  --muted-foreground: oklch(0.48 0.02 253);
+
+  --accent: oklch(0.93 0.015 253);
+  --accent-foreground: oklch(0.24 0.03 255);
+
+  /* Fail / destructive. */
+  --destructive: oklch(0.5 0.19 25);
+  --destructive-foreground: oklch(0.98 0.003 247);
+
+  /* Pass / approved. */
+  --success: oklch(0.45 0.12 152);
+  --success-foreground: oklch(0.98 0.01 152);
+
+  /* Pending / needs attention. */
+  --warning: oklch(0.65 0.15 75);
+  --warning-foreground: oklch(0.2 0.02 75);
+
+  --border: oklch(0.9 0.008 250);
+  --input: oklch(0.9 0.008 250);
+  --ring: oklch(0.32 0.06 255 / 0.5);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: var(--ring);
+  }
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+  }
 }

@@ -147,3 +147,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — frontend foundation: Tailwind, shadcn, app shell, auth, instrument registration
+
+**Done:** Replaced the throwaway login skeleton with the real frontend foundation. Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first, no `tailwind.config.js`) + shadcn/ui — `ui.shadcn.com` is egress-blocked from this sandbox (same as `vercel.com`), so the CLI couldn't run; wrote `components/ui/{button,input,label,select,card,form,table,dialog,sonner,badge,skeleton}.jsx` by hand to shadcn's own standard shape, and committed `components.json` so a future CLI run in an environment with network access still targets the same structure. Institutional design tokens as CSS variables (`src/index.css`): restrained deep slate-blue primary, cool slate neutrals, small radius, semantic success/warning/destructive kept separate from primary. `react-router-dom` with an `AuthGate` layout route (loading skeleton while the session check is in flight, never a redirect flash) and an `AppShell` layout (top bar: wordmark, nav, email + role badge via the existing `/api/whoami`, logout). Real Supabase auth (`src/lib/supabase.js`) and a central `apiFetch` helper (`src/lib/api.js`) that attaches `Authorization: Bearer` automatically. Built the one real screen: `/instruments` (list, with loading/empty/error states) and `/instruments/new` (shadcn Form + react-hook-form, `POST /api/instruments`) — numeric fields (`e_value`/`d_value`/`max_capacity`/`min_capacity`) stay strings from the input to the fetch body, never `Number()`/`parseFloat()`, matching the backend's `StrictDecimal` rejection of bare floats; a comment at the call site says why. `npm run build` succeeds (verified, see reply). Did not touch `apitest.html`, the backend, the engine, or `vercel.json`. Updated `docs/architecture.md` with a Frontend section.
+
+**Next:** Verify on the preview deploy (log in, see the shell, register an instrument, see it in the list — full checklist in the reply/PR description); then the session/reading/verify/approve screens, and a separate cleanup task to remove `apitest.html` once they exist.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
