@@ -48,6 +48,8 @@ Runs on `http://localhost:5173`. Needs `frontend/.env` (see `frontend/.env.examp
 
 One Vercel project, one domain, two [Vercel Services](https://vercel.com/docs/services): `frontend` (the Vite build, served at `/`) and `backend` (the FastAPI app, reachable under `/api`). The routing is defined in `vercel.json` at the repo root — a rewrite sends `/api/:path*` to the backend service, and everything else (SPA fallback) to the frontend service, which serves `index.html`. There is no separate frontend deploy and backend deploy to keep in sync; it's one project, one domain, built and routed together.
 
+The `backend` service is pinned to region `bom1` (Mumbai) in `vercel.json`, to co-locate it with the Supabase project (`ap-south-1`) and avoid a trans-Pacific round trip on every request from India-based users.
+
 ### Environment variables (set in the Vercel dashboard, per environment)
 
 Backend (runtime — read by the FastAPI process on each request):
@@ -70,4 +72,4 @@ After deploy, visit the site and log in as the technician, then as the approver:
 - `/api/whoami/debug` returns `visible_profile_count` greater than 1 for `approver@scalecert.demo`.
 - That split is the proof RLS is applying per-user in production, through a JWT-scoped client — not the service-role key.
 
-## Status: scaffolding
+## Status: walking skeleton deployed; Phase 0 (auth + per-user RLS round-trip) verified in production
