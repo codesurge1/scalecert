@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, session lifecycle (as of ADR-0005), and API surface (walking-skeleton scope) are authoritative. Engine, PDF, and audit sections are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), and engine design (Weighing only) are authoritative. PDF and audit sections are pending their build tasks.
 
 ## System overview
 
@@ -34,6 +34,16 @@ Enums: `user_role`, `accuracy_class`, `verification_type`, `session_status`, `in
 **Certificate numbering.** `certificate_number` on `test_sessions` is assigned only at approval time, formatted `SC-{YEAR}-{6-digit sequential}` drawn from `certificate_number_seq` — never before approval (see CLAUDE.md guardrails).
 
 ## Engine design
+
+The `engine/` package (repo root, sibling to `backend/` and `frontend/`) is pure: standard library only, no FastAPI, Supabase, network, DB, or wall-clock imports — enforced mechanically by `tests/test_purity.py`, which walks every `engine/*.py` file's AST and fails if any top-level import resolves outside `sys.stdlib_module_names`.
+
+All arithmetic uses `Decimal`, never `float` — a boundary verdict (e.g. `Ec == mpe` exactly) must not turn on binary floating-point rounding. Every function requires all of its inputs explicitly (no default values); a missing or wrong-typed input raises `TypeError`/`ValueError` rather than being guessed (`tests/test_input_validation.py` proves this for both the MPE lookup and the Weighing calculation).
+
+**MPE lookup** (`engine/mpe.py`, `lookup_mpe`) — inputs: `accuracy_class`, `m` (load in multiples of `e`), `e` (for the grams conversion), `verification_type`. Looks up R76-1 Table 6 by class and `m`-band (upper bound inclusive, next band's lower bound exclusive of it); `initial`/`subsequent` return the table value as-is, `in_service` doubles it. Returns an `MpeResult` carrying not just the number but the band boundaries used (`band_lower_m`, `band_upper_m`) and the class/type/e/m it was computed from — so a result is traceable back to which row of Table 6 produced it, not just the resulting figure.
+
+**Weighing calculation** (`engine/weighing.py`, `compute_weighing_result`) — `E = I + 1/2*e - deltaL - L`, `Ec = E - E0`, verdict `PASS` iff `|Ec| <= mpe` (limit inclusive). Returns a `WeighingResult` with the full derivation (`L, I, delta_l, E0, E, Ec, mpe, margin, passed`) plus the `MpeResult` that produced `mpe` — never just a boolean. `margin = mpe - |Ec|` so a near-miss is visible, not just a verdict.
+
+**Validation.** The canonical worked example (Class III, e=1g, initial, load 300g → Band 1 → mpe=±0.5g; reading 300.4g → PASS; 300.6g → FAIL — `docs/plan.md` Phase 1) was written as a failing test *before* the engine existed, then implemented until green. Per CLAUDE.md, one example is a smoke test, not validation: no verdict is trusted until `tests/test_mpe_boundaries.py`'s boundary-value table passes — every Table 6 band edge from both sides for all four classes, the at-limit-inclusive/just-over verdict boundary in both directions, `in_service` doubling actually flipping a verdict, and the Max/Min ends of each class's table range.
 
 ## Roles & permissions
 
