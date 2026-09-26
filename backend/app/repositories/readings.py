@@ -1,5 +1,7 @@
 from supabase import Client
 
+from app.repositories.errors import run_insert, run_select
+
 READINGS_TABLE = "test_readings"
 RESULTS_TABLE = "test_results"
 AUDIT_TABLE = "audit_log"
@@ -14,9 +16,8 @@ def insert_reading(
     direction: str,
     data: dict,
 ) -> dict:
-    rows = (
-        client.table(READINGS_TABLE)
-        .insert(
+    return run_insert(
+        client.table(READINGS_TABLE).insert(
             {
                 "session_id": session_id,
                 "test_type": "weighing",
@@ -25,11 +26,13 @@ def insert_reading(
                 "data": data,
                 "entered_by": entered_by,
             }
-        )
-        .execute()
-        .data
+        ),
+        table=READINGS_TABLE,
+        hint=(
+            "recording a reading — check policy 'readings_write' (requires entered_by = caller and "
+            "a visible, own, draft-status session)"
+        ),
     )
-    return rows[0]
 
 
 def list_readings(client: Client, *, session_id: str, test_type: str) -> list[dict]:
@@ -37,25 +40,18 @@ def list_readings(client: Client, *, session_id: str, test_type: str) -> list[di
     # (sequence_no, direction) if a direction was ever resubmitted — there's
     # no update endpoint, so a resubmission is a second insert, not an
     # overwrite (docs/architecture.md).
-    return (
-        client.table(READINGS_TABLE)
-        .select("*")
-        .eq("session_id", session_id)
-        .eq("test_type", test_type)
-        .order("created_at")
-        .execute()
-        .data
+    return run_select(
+        client.table(READINGS_TABLE).select("*").eq("session_id", session_id).eq("test_type", test_type).order("created_at"),
+        table=READINGS_TABLE,
+        hint=f"listing readings for session {session_id!r}",
     )
 
 
 def list_results(client: Client, *, session_id: str, test_type: str) -> list[dict]:
-    return (
-        client.table(RESULTS_TABLE)
-        .select("*")
-        .eq("session_id", session_id)
-        .eq("test_type", test_type)
-        .execute()
-        .data
+    return run_select(
+        client.table(RESULTS_TABLE).select("*").eq("session_id", session_id).eq("test_type", test_type),
+        table=RESULTS_TABLE,
+        hint=f"listing results for session {session_id!r}",
     )
 
 
@@ -64,9 +60,8 @@ def delete_reading(client: Client, reading_id: str) -> None:
 
 
 def insert_result(client: Client, *, session_id: str, reading_id: str, result: dict, passed: bool) -> dict:
-    rows = (
-        client.table(RESULTS_TABLE)
-        .insert(
+    return run_insert(
+        client.table(RESULTS_TABLE).insert(
             {
                 "session_id": session_id,
                 "test_type": "weighing",
@@ -74,11 +69,10 @@ def insert_result(client: Client, *, session_id: str, reading_id: str, result: d
                 "result": result,
                 "passed": passed,
             }
-        )
-        .execute()
-        .data
+        ),
+        table=RESULTS_TABLE,
+        hint="recording a result — check policy 'results_write' (requires a visible, own, draft-status session)",
     )
-    return rows[0]
 
 
 def insert_audit_log(client: Client, *, session_id: str, actor_id: str, action: str, data: dict) -> None:

@@ -16,6 +16,7 @@ from app.deps import AuthContext, get_auth_context
 from app.repositories import instruments as instruments_repo
 from app.repositories import readings as readings_repo
 from app.repositories import sessions as sessions_repo
+from app.repositories.errors import RepositoryError
 from app.services import weighing as weighing_service
 from app.services.sessions import SessionNotDraft, ensure_session_is_draft
 from engine.types import VerificationType
@@ -26,16 +27,25 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _get_session_or_404(client, session_id: str) -> dict:
-    row = sessions_repo.get_session(client, session_id)
+    # A RepositoryError here (e.g. a malformed session_id hitting Postgres's
+    # "invalid input syntax for type uuid") folds into the same 404 a
+    # genuinely nonexistent/not-visible session gets — CLAUDE.md already
+    # treats "doesn't exist" and "not visible under RLS" as one bucket, and
+    # "can't even resolve as an id" belongs in it too, not a bare crash.
+    try:
+        row = sessions_repo.get_session(client, session_id)
+    except RepositoryError as exc:
+        raise HTTPException(status_code=404, detail=f"session not found ({exc.hint})") from exc
     if row is None:
-        # Same not-found/not-visible non-distinction as instruments — see
-        # routers/instruments.py.
         raise HTTPException(status_code=404, detail="session not found")
     return row
 
 
 def _get_instrument_or_404(client, instrument_id: str) -> dict:
-    row = instruments_repo.get_instrument(client, instrument_id)
+    try:
+        row = instruments_repo.get_instrument(client, instrument_id)
+    except RepositoryError as exc:
+        raise HTTPException(status_code=404, detail=f"instrument not found ({exc.hint})") from exc
     if row is None:
         raise HTTPException(status_code=404, detail="instrument not found")
     return row
@@ -44,11 +54,24 @@ def _get_instrument_or_404(client, instrument_id: str) -> dict:
 @router.post("", response_model=SessionOut, status_code=201)
 def create_session(payload: SessionIn, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
     # Confirms the instrument exists and is visible before opening a session
-    # against it, rather than deferring to a foreign-key error.
-    _get_instrument_or_404(auth.client, payload.instrument_id)
+    # against it, rather than deferring to a foreign-key error. payload.instrument_id
+    # is a pydantic UUID4 (see contracts/session.py) — stringified for the query builder.
+    _get_instrument_or_404(auth.client, str(payload.instrument_id))
 
-    session_row = sessions_repo.insert_session(auth.client, auth.user_id, payload)
-    sessions_repo.insert_session_test_selection(auth.client, session_row["id"], TestType.WEIGHING.value)
+    # The two-step insert (session, then its weighing selection row) is the
+    # exact path that used to raise a bare IndexError on an empty PostgREST
+    # response. Both repo calls now raise RepositoryError instead (never a
+    # bare IndexError/APIError) — caught here so the response says which
+    # step failed and why, not just "500".
+    try:
+        session_row = sessions_repo.insert_session(auth.client, auth.user_id, payload)
+        sessions_repo.insert_session_test_selection(auth.client, session_row["id"], TestType.WEIGHING.value)
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not create the session ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
     selection_rows = sessions_repo.get_session_test_selections(auth.client, session_row["id"])
     return session_out_from_rows(session_row, selection_rows)
 
@@ -136,14 +159,20 @@ def submit_weighing_reading(
     # reading rather than leave a reading with no computed verdict. A
     # single Postgres RPC doing both inserts atomically would remove this
     # rollback step entirely; not built in this task.
-    reading_row = readings_repo.insert_reading(
-        auth.client,
-        session_id=session_id,
-        entered_by=auth.user_id,
-        sequence_no=payload.sequence_no,
-        direction=payload.direction.value,
-        data=submission.reading.model_dump(mode="json"),
-    )
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            sequence_no=payload.sequence_no,
+            direction=payload.direction.value,
+            data=submission.reading.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
 
     try:
         readings_repo.insert_result(
@@ -153,6 +182,12 @@ def submit_weighing_reading(
             result=submission.result_out.model_dump(mode="json"),
             passed=submission.result_out.passed,
         )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
     except Exception:
         readings_repo.delete_reading(auth.client, reading_row["id"])
         raise HTTPException(

@@ -2,7 +2,11 @@
 repository functions, no live Supabase). Verifies not-found -> 404,
 not-draft -> 409, out-of-range sequence_no -> 422, the happy path writing
 reading+result together, the orphan-reading rollback on result-insert
-failure, and that an audit-log failure is non-fatal.
+failure, that an audit-log failure is non-fatal, and — the previously
+untested path — POST /sessions (create_session): the happy path, malformed
+instrument_id -> 422, instrument not found -> 404, and that a
+RepositoryError from either insert step maps to a clean, informative 403/500
+rather than the bare IndexError-triggered 500 this task fixes.
 """
 
 import app.repositories.instruments as instruments_repo
@@ -10,11 +14,13 @@ import app.repositories.readings as readings_repo
 import app.repositories.sessions as sessions_repo
 from app.deps import AuthContext, get_auth_context
 from app.main import app
+from app.repositories.errors import RepositoryError
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
 _FAKE_AUTH = AuthContext(client=object(), user_id="11111111-1111-1111-1111-111111111111", token="tok")
+_INSTRUMENT_ID = "11111111-1111-4111-8111-111111111111"
 
 _INSTRUMENT_ROW = {
     "id": "instr-1",
@@ -55,10 +61,126 @@ def teardown_module(_module):
     app.dependency_overrides.clear()
 
 
+def test_create_session_happy_path(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(sessions_repo, "insert_session", lambda client, created_by, payload: dict(_DRAFT_SESSION_ROW))
+    monkeypatch.setattr(
+        sessions_repo,
+        "insert_session_test_selection",
+        lambda client, session_id, test_type: {"id": "sel-1", "session_id": session_id, "test_type": test_type},
+    )
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session_test_selections",
+        lambda client, session_id: [
+            {
+                "id": "sel-1",
+                "session_id": session_id,
+                "test_type": "weighing",
+                "applicable": True,
+                "na_reason": None,
+                "zero_device_status": None,
+                "status": "pending",
+            }
+        ],
+    )
+
+    resp = client.post("/api/sessions", json={"instrument_id": _INSTRUMENT_ID, "verification_type": "initial"})
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["status"] == "draft"
+    assert body["test_selections"][0]["test_type"] == "weighing"
+
+
+def test_create_session_404_when_instrument_not_found(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: None)
+    resp = client.post("/api/sessions", json={"instrument_id": _INSTRUMENT_ID, "verification_type": "initial"})
+    assert resp.status_code == 404
+
+
+def test_create_session_422_when_instrument_id_malformed():
+    # The exact frontend-bug shape (empty/"undefined"/non-UUID) that used to
+    # reach Postgres and 500 — now a clean 422 before any DB call, so no repo
+    # mocking is needed here at all.
+    resp = client.post("/api/sessions", json={"instrument_id": "not-a-uuid", "verification_type": "initial"})
+    assert resp.status_code == 422
+
+
+def test_create_session_maps_likely_rls_repository_error_to_403(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+
+    def failing_insert_session(client, created_by, payload):
+        raise RepositoryError(
+            table="test_sessions", operation="insert", hint="RLS rejected it", likely_rls=True
+        )
+
+    monkeypatch.setattr(sessions_repo, "insert_session", failing_insert_session)
+
+    resp = client.post("/api/sessions", json={"instrument_id": _INSTRUMENT_ID, "verification_type": "initial"})
+    assert resp.status_code == 403
+    assert "test_sessions" in resp.json()["detail"]
+
+
+def test_create_session_maps_non_rls_repository_error_to_500(monkeypatch):
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+
+    def failing_insert_session(client, created_by, payload):
+        raise RepositoryError(table="test_sessions", operation="insert", hint="something else broke", likely_rls=False)
+
+    monkeypatch.setattr(sessions_repo, "insert_session", failing_insert_session)
+
+    resp = client.post("/api/sessions", json={"instrument_id": _INSTRUMENT_ID, "verification_type": "initial"})
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert "something else broke" in detail  # never a bare, undiagnosable "Internal Server Error"
+
+
+def test_create_session_maps_repository_error_from_second_insert_step(monkeypatch):
+    # insert_session succeeds; insert_session_test_selection (the second
+    # step — the more RLS-exposed one, see repositories/sessions.py) fails.
+    # This is exactly the two-step-insert scenario the prior diagnosis named.
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(sessions_repo, "insert_session", lambda client, created_by, payload: dict(_DRAFT_SESSION_ROW))
+
+    def failing_insert_selection(client, session_id, test_type):
+        raise RepositoryError(
+            table="session_test_selection",
+            operation="insert",
+            hint="insert returned zero rows; likely an RLS policy silently rejected it",
+            likely_rls=True,
+        )
+
+    monkeypatch.setattr(sessions_repo, "insert_session_test_selection", failing_insert_selection)
+
+    resp = client.post("/api/sessions", json={"instrument_id": _INSTRUMENT_ID, "verification_type": "initial"})
+    assert resp.status_code == 403
+    assert "session_test_selection" in resp.json()["detail"]
+
+
 def test_get_session_404_when_not_found(monkeypatch):
     monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: None)
     resp = client.get("/api/sessions/does-not-exist")
     assert resp.status_code == 404
+
+
+def test_get_session_404_not_500_when_id_is_malformed(monkeypatch):
+    # Simulates what repositories.sessions.get_session now raises (via
+    # run_select) for a path param that isn't a valid UUID — Postgres's
+    # "invalid input syntax for type uuid". Before this task's fix, nothing
+    # caught this and it fell through as an unhandled 500 with no detail;
+    # it now folds into the same clean 404 a genuinely missing session gets.
+    def raise_malformed_id(client, session_id):
+        raise RepositoryError(
+            table="test_sessions",
+            operation="select",
+            hint="PostgREST error 22P02: invalid input syntax for type uuid",
+            likely_rls=False,
+        )
+
+    monkeypatch.setattr(sessions_repo, "get_session", raise_malformed_id)
+    resp = client.get("/api/sessions/not-a-uuid")
+    assert resp.status_code == 404
+    assert "22P02" in resp.json()["detail"]
 
 
 def test_get_session_returns_selections(monkeypatch):

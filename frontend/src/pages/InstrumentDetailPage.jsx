@@ -140,7 +140,7 @@ export function InstrumentDetailPage() {
         ) : sessions.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              No verification sessions yet for this instrument. Use "Start verification" above to open one.
+              No verification sessions yet for this instrument. Use "New verification session" above to open one.
             </CardContent>
           </Card>
         ) : (

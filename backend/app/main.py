@@ -1,13 +1,31 @@
 import os
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.deps import AuthContext, get_auth_context
+from app.repositories.errors import RepositoryError
 from app.routers.instruments import router as instruments_router
 from app.routers.sessions import router as sessions_router
 
 app = FastAPI(title="ScaleCert API — walking skeleton")
+
+
+@app.exception_handler(RepositoryError)
+async def repository_error_handler(request: Request, exc: RepositoryError) -> JSONResponse:
+    """The systemic backstop: any `RepositoryError` a route doesn't handle
+    itself (most GETs — see the "resolve-or-404" helpers in the routers,
+    which fold a RepositoryError into a 404 instead) lands here rather than
+    becoming FastAPI's default, detail-free 500. `likely_rls` picks 403 over
+    500 for what looks like a genuine RLS rejection (CLAUDE.md: RLS fails
+    silently — this is the "handle the explicit-error shape" half of that
+    guardrail; the repository layer's `run_insert` already handles the
+    "empty-result" half).
+    """
+    status_code = 403 if exc.likely_rls else 500
+    return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
 
 # Same-origin in production (frontend and backend share one Vercel domain via
 # Vercel Services, routed by /vercel.json) means CORS isn't needed there at all.

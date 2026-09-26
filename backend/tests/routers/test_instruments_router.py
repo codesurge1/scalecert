@@ -4,6 +4,7 @@ import app.repositories.instruments as instruments_repo
 import app.repositories.sessions as sessions_repo
 from app.deps import AuthContext, get_auth_context
 from app.main import app
+from app.repositories.errors import RepositoryError
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
@@ -66,10 +67,39 @@ def test_create_instrument_rejects_invalid_body():
     assert resp.status_code == 422
 
 
+def test_create_instrument_maps_repository_error_to_403_when_likely_rls(monkeypatch):
+    def failing_insert(client, registered_by, payload):
+        raise RepositoryError(table="instruments", operation="insert", hint="RLS rejected it", likely_rls=True)
+
+    monkeypatch.setattr(instruments_repo, "insert_instrument", failing_insert)
+    resp = client.post("/api/instruments", json=_VALID_BODY)
+    assert resp.status_code == 403
+    assert "instruments" in resp.json()["detail"]
+
+
 def test_get_instrument_404_when_not_found(monkeypatch):
     monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: None)
     resp = client.get("/api/instruments/does-not-exist")
     assert resp.status_code == 404
+
+
+def test_get_instrument_404_not_500_when_id_is_malformed(monkeypatch):
+    # Before this task's fix, an APIError from a malformed id (e.g. Postgres's
+    # "invalid input syntax for type uuid") was never caught anywhere in this
+    # call chain and fell through as an unhandled, detail-free 500. It now
+    # folds into the same clean 404 a genuinely missing instrument gets.
+    def raise_malformed_id(client, instrument_id):
+        raise RepositoryError(
+            table="instruments",
+            operation="select",
+            hint="PostgREST error 22P02: invalid input syntax for type uuid",
+            likely_rls=False,
+        )
+
+    monkeypatch.setattr(instruments_repo, "get_instrument", raise_malformed_id)
+    resp = client.get("/api/instruments/not-a-uuid")
+    assert resp.status_code == 404
+    assert "22P02" in resp.json()["detail"]
 
 
 def test_list_instruments_returns_rows(monkeypatch):

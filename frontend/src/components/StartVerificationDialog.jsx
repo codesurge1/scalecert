@@ -28,8 +28,12 @@ const VERIFICATION_TYPES = [
 ];
 
 /**
- * The one entry point into the Weighing workflow: pick a verification_type
- * for an instrument, POST /api/sessions, and land on its session page.
+ * The one entry point for opening a verification session on an instrument:
+ * pick a verification_type (asked exactly once, here — never again when
+ * opening a test), POST /api/sessions, and land on the session overview,
+ * where tests are added one at a time via AddTestDialog. Renamed from
+ * "Start verification" to "New verification session" to keep "session"
+ * (this) distinct from "test" (Weighing, etc. — opened from the overview).
  */
 export function StartVerificationDialog({ instrumentId, instrumentLabel }) {
   const navigate = useNavigate();
@@ -46,7 +50,7 @@ export function StartVerificationDialog({ instrumentId, instrumentLabel }) {
         method: "POST",
         body: { instrument_id: instrumentId, verification_type: verificationType },
       });
-      toast.success("Verification session started.");
+      toast.success("Verification session created.");
       setOpen(false);
       navigate(`/sessions/${session.id}`);
     } catch (err) {
@@ -59,11 +63,11 @@ export function StartVerificationDialog({ instrumentId, instrumentLabel }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm">Start verification</Button>
+        <Button size="sm">New verification session</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Start verification</DialogTitle>
+          <DialogTitle>New verification session</DialogTitle>
           <DialogDescription>{instrumentLabel}</DialogDescription>
         </DialogHeader>
 
@@ -90,7 +94,7 @@ export function StartVerificationDialog({ instrumentId, instrumentLabel }) {
             Cancel
           </Button>
           <Button onClick={handleStart} disabled={submitting}>
-            {submitting ? "Starting…" : "Start"}
+            {submitting ? "Creating…" : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

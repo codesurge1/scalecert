@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/AppShell";
+import { AddTestDialog } from "@/components/session/AddTestDialog";
+import { TEST_ROWS } from "@/lib/testChecklist";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,46 +23,7 @@ const VERIFICATION_TYPE_LABELS = {
   in_service: "In-service verification",
 };
 
-// The OIML clause 8.3.3 seven-item checklist (CLAUDE.md). Only Weighing has
-// a working form so far; `zero_tare` has no own `test_type` in the schema
-// yet — it's tracked as a Weighing variant (docs/plan.md Phase 3) — so it's
-// shown here for completeness but is never itself "startable". The other
-// five map onto real `test_type` values that will get their own forms in
-// later tasks; applicability for the conditional three is computed from the
-// instrument here rather than from `session_test_selections`, since no
-// selection rows are created for them yet (only `weighing` is, at session
-// creation) — the per-session test selector is a later task (docs/plan.md
-// Phase 3), not built here.
-const TEST_ROWS = [
-  { key: "weighing", label: "Weighing", clause: "A.4.4 / A.5.3.1" },
-  {
-    key: "zero_tare",
-    label: "Zero / tare device accuracy",
-    clause: "A.4.4 variant",
-    note: "Tracked as part of Weighing in this build — not yet its own form.",
-  },
-  { key: "repeatability", label: "Repeatability", clause: "A.4.5" },
-  { key: "eccentricity", label: "Eccentricity (3.1 weights)", clause: "A.4.6" },
-  {
-    key: "discrimination",
-    label: "Discrimination",
-    clause: "A.4.8",
-    naReason: (instrument) => (instrument.indication_type === "digital" ? "N/A — digital instrument" : null),
-  },
-  {
-    key: "tilting",
-    label: "Tilting",
-    clause: "A.5.1.3",
-    naReason: (instrument) => (!instrument.is_mobile ? "N/A — mobile instruments only" : null),
-  },
-  {
-    key: "sensitivity",
-    label: "Sensitivity",
-    clause: "A.4.9",
-    naReason: (instrument) =>
-      instrument.indication_type !== "non_self_indicating" ? "N/A — non-self-indicating instruments only" : null,
-  },
-];
+const WEIGHING_ROW = TEST_ROWS.find((row) => row.key === "weighing");
 
 function StatusBadge({ status }) {
   const variant = status === "draft" ? "secondary" : status === "issued" || status === "approved" ? "success" : "outline";
@@ -80,18 +43,6 @@ function TestStatusBadge({ status, verdict }) {
   switch (status) {
     case "loading":
       return <Skeleton className="h-5 w-24" />;
-    case "na":
-      return (
-        <Badge variant="outline" className="text-muted-foreground">
-          N/A
-        </Badge>
-      );
-    case "not_available":
-      return (
-        <Badge variant="outline" className="text-muted-foreground">
-          Not yet available
-        </Badge>
-      );
     case "not_started":
       return <Badge variant="outline">Not started</Badge>;
     case "in_progress":
@@ -109,11 +60,14 @@ function TestStatusBadge({ status, verdict }) {
 
 /**
  * The session overview: instrument -> instrument detail -> THIS PAGE -> a
- * test page. Shows the 7-item checklist with status/applicability and a
- * Start/Open button — only Weighing's does anything yet. Replaces the old
- * behavior where opening a session jumped straight into the Weighing table;
- * the verification_type was already chosen once, at session creation
- * (StartVerificationDialog), never re-asked here.
+ * test page, via "Add test" (AddTestDialog) -> pick from the 7 -> that
+ * test's table opens. Weighing is always already "added" the moment a
+ * session exists (its session_test_selection row is created unconditionally
+ * at session creation, docs/architecture.md), so it's listed here directly
+ * with live status rather than waiting for a redundant pick; the dialog is
+ * the discovery surface for the full 7-item checklist, where only Weighing
+ * is actually selectable today. The verification_type was already chosen
+ * once, at session creation (StartVerificationDialog), never re-asked here.
  */
 export function SessionPage() {
   const { id } = useParams();
@@ -170,7 +124,7 @@ export function SessionPage() {
         <PageHeader title="Session overview" />
         <div className="space-y-3">
           <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-40 w-full" />
         </div>
       </div>
     );
@@ -204,6 +158,7 @@ export function SessionPage() {
         <PageHeader
           title="Session overview"
           description={VERIFICATION_TYPE_LABELS[session.verification_type] ?? session.verification_type}
+          actions={instrument === undefined ? null : <AddTestDialog sessionId={id} instrument={instrument} />}
         />
       </div>
 
@@ -246,7 +201,7 @@ export function SessionPage() {
 
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          OIML clause 8.3.3 verification checklist
+          Tests added to this session
         </h2>
         <Card>
           <Table>
@@ -258,41 +213,28 @@ export function SessionPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {TEST_ROWS.map((row) => {
-                const naReason = instrument && row.naReason ? row.naReason(instrument) : null;
-                const isWeighing = row.key === "weighing";
-                const status = naReason
-                  ? "na"
-                  : isWeighing
-                    ? weighingProgress.status
-                    : "not_available";
-                const startLabel = weighingProgress.status === "not_started" ? "Start" : "Open";
-
-                return (
-                  <TableRow key={row.key}>
-                    <TableCell>
-                      <div className="font-medium">{row.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {naReason || row.note || row.clause}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <TestStatusBadge status={status} verdict={weighingProgress.verdict} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {isWeighing ? (
-                        <Button asChild size="sm" variant={weighingProgress.status === "not_started" ? "default" : "outline"}>
-                          <Link to={`/sessions/${id}/weighing`}>{startLabel}</Link>
-                        </Button>
-                      ) : (
-                        <Button size="sm" variant="outline" disabled>
-                          {naReason ? "N/A" : "Coming soon"}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {/* Weighing is always already added — its session_test_selection
+                  row is created unconditionally at session creation, so it's
+                  never in a genuine "not yet added" state. Once a real
+                  per-session test selector exists (docs/plan.md Phase 3),
+                  this row list will reflect whatever's actually been added,
+                  not just Weighing unconditionally. */}
+              <TableRow>
+                <TableCell>
+                  <div className="font-medium">{WEIGHING_ROW.label}</div>
+                  <div className="text-xs text-muted-foreground">{WEIGHING_ROW.clause}</div>
+                </TableCell>
+                <TableCell>
+                  <TestStatusBadge status={weighingProgress.status} verdict={weighingProgress.verdict} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild size="sm" variant={weighingProgress.status === "not_started" ? "default" : "outline"}>
+                    <Link to={`/sessions/${id}/weighing`}>
+                      {weighingProgress.status === "not_started" ? "Start" : "Open"}
+                    </Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </Card>

@@ -4,7 +4,7 @@ resource contract, not a test_type contract — see app/contracts/__init__.py).
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import UUID4, BaseModel, ConfigDict
 
 from app.contracts.common import SessionStatus, TestType
 from engine.types import VerificationType
@@ -15,7 +15,12 @@ class SessionIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    instrument_id: str
+    # UUID4-typed (not a bare `str`) so a malformed/empty/"undefined" id —
+    # the frontend-bug shape that used to reach Postgres as a raw string and
+    # 500 on "invalid input syntax for type uuid" — fails Pydantic
+    # validation instead, as a clean 422, before any DB call happens.
+    # `instruments.id` is `gen_random_uuid()` (pgcrypto), always a v4 UUID.
+    instrument_id: UUID4
     verification_type: VerificationType
 
 
