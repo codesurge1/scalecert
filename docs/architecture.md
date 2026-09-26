@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), and engine design (Weighing calculation + load-sequence generator) are authoritative. PDF and audit sections are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), engine design (Weighing calculation + load-sequence generator), and the Weighing contracts/API-validation layer are authoritative. PDF and audit sections are pending their build tasks.
 
 ## System overview
 
@@ -52,6 +52,22 @@ All arithmetic uses `Decimal`, never `float` — a boundary verdict (e.g. `Ec ==
 - **Band-1 fill spacing is a documented placeholder, not a sourced value.** OIML does not prescribe how many extra loads, or where, to place inside Band 1 beyond the mandatory anchors, and RRSL has not yet confirmed a convention (`docs/plan.md` Open questions). When anchors fall short of the ≥5 minimum, the gap is filled with evenly spaced points strictly inside Band 1 — deterministic and reproducible (never random, so a certification record reproduces identically), but explicitly labeled (`FILL_SPACING_STRATEGY`) as a convention pending RRSL confirmation, changeable in one place. Every `LoadEntry.kind` is `max` / `min` / `band_transition` (sourced) or `fill` (convention) — `LoadEntry.is_anchor` is `False` only for `fill` — so a report or UI can never present a placeholder point as a mandated one.
 - **Bidirectional testing is not dropped, just deferred.** The plan requires each load tested going up and coming back down; this generator returns only the distinct ascending `L` values — expanding each into an "up" and "down" reading is the reading layer's job (Phase 2), not this module's.
 - **Single-interval only, for now.** The generator assumes a single-interval instrument (one `e` across the whole range). Multi-interval instruments (`instruments.is_multi_interval`) — where `e` itself changes across sub-ranges — are a known future extension, not handled here.
+
+## Contracts / API validation layer
+
+`backend/app/contracts/` holds the Pydantic v2 models that sit between the wire and the engine — one module per `test_type`. Only `weighing.py` exists so far (the vertical slice); the other six test types get their own module later, following its shape.
+
+**Decimal-as-string discipline (the critical rule).** Every numeric field uses a shared `StrictDecimal` type (`backend/app/contracts/common.py`): it accepts a JSON string (preferred) or an int, and **rejects a bare float outright** — not because pydantic's own default `Decimal` coercion is unsafe (checked: it converts a float via `str()` internally, so `300.6` doesn't silently become `300.5999...`), but because the contract layer's job is to guarantee this regardless of that implementation detail, and to keep API clients on the wire-safe path (quoted decimal strings) rather than relying on an unquoted JSON number happening to work out. On output, `model_dump(mode="json")` serializes every `Decimal` field back to a string via a `PlainSerializer` — a `Decimal` never crosses the wire as a JSON number in either direction.
+
+**One source of truth for enums.** `WeighingReadingIn`/`WeighingResultOut` use `engine.types.AccuracyClass` and `VerificationType` directly as field types — not a mirrored copy. An API value and an engine value are the same Python object, so they cannot drift; `test_contract_enums_are_the_engine_enums_not_a_copy` locks this in. `Direction` (up/down) has no engine equivalent — the engine is direction-agnostic — so it's defined once in `common.py`.
+
+**The engine↔contract seam is two named functions**, not scattered conversion code: `reading_to_engine_kwargs(reading: WeighingReadingIn) -> dict` (feeds `engine.weighing.compute_weighing_result`) and `result_to_out(result: WeighingResult) -> WeighingResultOut` (the reverse). `WeighingResultOut` mirrors the engine's full derivation (`L, I, delta_l, E0, E, Ec, mpe, margin, passed`) plus the MPE band context (`mpe_in_e`, `band_lower_m`, `band_upper_m`) — never just a boolean.
+
+**`L` is a validated field, not a trusted one.** `WeighingReadingIn.L` exists on the model (system-generated from `engine.load_sequence`, per its own field description) precisely so it passes through the same validation as every other value — the contract's job is to validate shape, not to decide provenance.
+
+The engine package remains completely untouched by this layer: `backend/app/contracts/` imports from `engine/`, never the reverse, and `tests/test_purity.py` (run in the same suite as these contract tests) confirms no Pydantic import ever leaks into `engine/`.
+
+**Known follow-up, not solved here.** The `engine/` package lives at the repo root, outside `backend/`, which is the Vercel Services `backend` service's own root directory. Wiring these contracts into real routes will need to confirm `engine/` is actually reachable in that service's deployed bundle — a deployment detail for the task that does that wiring, not this one.
 
 ## Roles & permissions
 

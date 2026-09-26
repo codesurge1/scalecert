@@ -111,3 +111,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — Pydantic contracts for Weighing reading and result
+
+**Done:** Added `backend/app/contracts/` (`common.py`: `StrictDecimal` — string/int accepted, bare float rejected outright, serializes back to a JSON string; `Direction` enum; `weighing.py`: `WeighingReadingIn`, `WeighingResultOut`, and the two named adapter functions `reading_to_engine_kwargs`/`result_to_out`). `accuracy_class`/`verification_type` reuse `engine.types` enums directly (one source of truth, not a mirrored copy) — locked in by a test. Pinned `pydantic==2.10.3` in `backend/requirements.txt`. Checked pydantic's own default `Decimal` coercion empirically: it already converts a float via `str()` (not the naive lossy path), but the contract rejects float anyway per the task's explicit requirement, independent of that implementation detail. Ran the combined suite (`tests/` + `backend/tests/`): **137 passed** (112 existing + 25 new, no regressions, engine purity test still green — confirms Pydantic never leaked into `engine/`). Added a "Contracts / API validation layer" section to `docs/architecture.md`, including a flagged follow-up: `engine/` lives outside `backend/`'s own Vercel-service root, which the routes-wiring task will need to address.
+
+**Next:** Wire these contracts into a real `POST /api/sessions/{id}/readings` route (Phase 2), which will need to resolve the `engine/`-outside-`backend/`-service-root deployment question noted above; then the remaining six test_type contracts, in the order set by Phase 3.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
