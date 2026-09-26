@@ -21,6 +21,13 @@ import { TEST_ROWS, isSelectable } from "@/lib/testChecklist";
  * Weighing directly too, since it's always already added (its
  * session_test_selection row is created unconditionally at session
  * creation), so picking it here just lands on the same page "Open" would.
+ *
+ * No forced sequence (docs/architecture.md, RRSL-confirmed): `isSelectable`
+ * takes only the row and the instrument, never any other test's progress,
+ * so Weighing is openable here regardless of whether any other test has
+ * been touched, and the disabled reason shown for a non-selectable row is
+ * always "N/A" (applicability) or "Coming soon" (not built yet) — never
+ * something implying another test must be completed first.
  */
 export function AddTestDialog({ sessionId, instrument }) {
   const navigate = useNavigate();

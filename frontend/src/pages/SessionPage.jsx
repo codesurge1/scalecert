@@ -68,6 +68,13 @@ function TestStatusBadge({ status, verdict }) {
  * the discovery surface for the full 7-item checklist, where only Weighing
  * is actually selectable today. The verification_type was already chosen
  * once, at session creation (StartVerificationDialog), never re-asked here.
+ *
+ * No forced sequence (docs/architecture.md, RRSL-confirmed): the
+ * Start/Open button below is never disabled and Weighing's own status
+ * (Not started/In progress/Complete) is shown purely for information —
+ * this page has no other real test to gate it against yet, and when the
+ * other six get their own forms, their statuses must remain equally
+ * inert with respect to each other and to Weighing's.
  */
 export function SessionPage() {
   const { id } = useParams();

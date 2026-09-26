@@ -44,6 +44,19 @@ export const TEST_ROWS = [
 // Only Weighing has a working table today, and only when it isn't N/A for
 // this instrument (it never is — Weighing is universal — but the check is
 // symmetric with every other row's gating, not special-cased).
+//
+// Tests are technician-selectable in ANY order — confirmed by RRSL (Deputy
+// Director Sharma) and docs/plan.md's per-session test selector requirement
+// ("Tests run in any order"); no test's availability may ever depend on
+// another test's status (not-started/in-progress/complete). This function
+// takes only `row` (which test) and `instrument` (its properties) as
+// arguments — deliberately never session/reading/progress state — so a
+// sequence dependency can't be reintroduced without changing this
+// signature. The only two legitimate gates are: (1) applicability — the
+// `naReason` check below, driven purely by instrument properties; (2) not
+// yet implemented — `row.key !== "weighing"`, since no other test has a
+// form built yet. Neither is a sequence lock, and nothing here reads any
+// other test's progress.
 export function isSelectable(row, instrument) {
   if (row.key !== "weighing") return false;
   const naReason = instrument && row.naReason ? row.naReason(instrument) : null;
