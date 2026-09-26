@@ -161,3 +161,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — weighing session UI with live derivation display
+
+**Done:** Built the core technician workflow on top of the existing design system: `StartVerificationDialog` (pick `verification_type`, `POST /api/sessions`, route to the new session) triggered from a "Start verification" action added to `/instruments`; `/sessions/:id` loads the session, its instrument, and the generated load sequence in parallel and renders a header (instrument, verification type, status badge, selected tests), `LoadSequenceTable` (per-load `sequence_no`/`L`/`m`/`mpe`, with a `KindBadge` that visually distinguishes sourced anchors from `fill` placeholder points — tooltip + caption owning the open item rather than flattening it away — and independent ↑/↓ status per load), and `ReadingEntryPanel` (I and ΔL visually grouped as the only technician-entered values, `L` shown read-only from the sequence, direction toggle, E0 field defaulted to "0" with a flagged note that zero-capture isn't a dedicated step yet, and on submit the full derivation — L, I, ΔL, E0, E, Ec, mpe, margin — rendered under a prominent PASS/FAIL badge). A 409 (session not draft) renders as a specific message and disables submission. Numeric fields stay strings from input to POST body, same convention as the Instrument Registration form. Deleted `frontend/public/apitest.html` — superseded by this real UI. Noted a real gap rather than working around it: there's no `GET .../weighing/readings` list route yet, so the readings table is local-state-only and refresh-fragile (the sequence and the API's own state are unaffected). `npm run build` succeeds (see reply). Did not touch backend/engine/vercel.json; no submit-for-review/approve/PDF/verify screens — sessions stay `draft`. Updated `docs/architecture.md`'s Frontend section.
+
+**Next:** Verify on the preview deploy (start a session → see the sequence → enter readings both directions on a couple of loads → see PASS/FAIL derivations — checklist in the reply/PR description); then submit-for-review/approve/return, PDF generation, and the public verify page.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

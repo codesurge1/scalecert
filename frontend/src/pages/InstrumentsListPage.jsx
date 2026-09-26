@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/AppShell";
+import { StartVerificationDialog } from "@/components/StartVerificationDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -92,6 +93,7 @@ export function InstrumentsListPage() {
                 <TableHead>Max</TableHead>
                 <TableHead>Min</TableHead>
                 <TableHead>Indication</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -109,6 +111,12 @@ export function InstrumentsListPage() {
                   <TableCell>{instrument.max_capacity} g</TableCell>
                   <TableCell>{instrument.min_capacity ?? "—"}</TableCell>
                   <TableCell className="capitalize">{instrument.indication_type.replaceAll("_", " ")}</TableCell>
+                  <TableCell className="text-right">
+                    <StartVerificationDialog
+                      instrumentId={instrument.id}
+                      instrumentLabel={instrument.type_designation || `Class ${instrument.accuracy_class} instrument`}
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
