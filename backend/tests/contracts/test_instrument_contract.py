@@ -35,9 +35,23 @@ def test_instrument_in_rejects_float_field():
 
 
 def test_instrument_in_rejects_missing_required_field():
-    bad = {k: v for k, v in _VALID_IN.items() if k != "accuracy_class"}
+    # min_capacity is required (changed from optional this task) — Table 3
+    # classification needs it; accuracy_class itself is now optional (it's
+    # server-derived), so missing IT no longer raises — see
+    # test_instrument_in_accuracy_class_is_optional below.
+    bad = {k: v for k, v in _VALID_IN.items() if k != "min_capacity"}
     with pytest.raises(ValidationError):
         InstrumentIn(**bad)
+
+
+def test_instrument_in_accuracy_class_is_optional():
+    # accuracy_class is no longer a required client input — it's derived
+    # server-side (app.services.instruments.derive_accuracy_class). Omitting
+    # it parses fine; the field only exists to disambiguate when e/Max/Min
+    # qualify for more than one class.
+    bad = {k: v for k, v in _VALID_IN.items() if k != "accuracy_class"}
+    instrument = InstrumentIn(**bad)
+    assert instrument.accuracy_class is None
 
 
 def test_instrument_in_rejects_bad_accuracy_class():
@@ -47,10 +61,20 @@ def test_instrument_in_rejects_bad_accuracy_class():
 
 def test_instrument_insert_payload_is_json_safe_and_carries_registered_by():
     instrument = InstrumentIn(**_VALID_IN)
-    payload = instrument_insert_payload("user-123", instrument)
+    payload = instrument_insert_payload("user-123", instrument, AccuracyClass.III)
     assert payload["registered_by"] == "user-123"
     assert payload["e_value"] == "1"  # Decimal serialized as a string, not a number
     assert payload["max_capacity"] == "5000"
+    assert payload["accuracy_class"] == "III"
+
+
+def test_instrument_insert_payload_uses_the_passed_accuracy_class_not_the_payload_field():
+    # The whole point of taking accuracy_class as an explicit argument: even
+    # if the client's own submitted accuracy_class field said something
+    # else, the server-derived value passed in here is what gets stored.
+    instrument = InstrumentIn(**dict(_VALID_IN, accuracy_class="IIII"))
+    payload = instrument_insert_payload("user-123", instrument, AccuracyClass.II)
+    assert payload["accuracy_class"] == "II"
 
 
 _RAW_ROW_WITH_FLOATS = dict(

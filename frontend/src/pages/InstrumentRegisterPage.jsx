@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { classifyInstrument } from "@/lib/accuracyClass";
 import { PageHeader } from "@/components/AppShell";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const ACCURACY_CLASSES = ["I", "II", "III", "IIII"];
 const INDICATION_TYPES = [
   { value: "digital", label: "Digital" },
   { value: "analog", label: "Analog" },
@@ -31,11 +32,11 @@ const INDICATION_TYPES = [
 ];
 
 const DEFAULT_VALUES = {
-  accuracy_class: "III",
   e_value: "",
   d_value: "",
   max_capacity: "",
   min_capacity: "",
+  accuracy_class_choice: "",
   indication_type: "digital",
   is_mobile: false,
   is_multi_interval: false,
@@ -47,19 +48,48 @@ const DEFAULT_VALUES = {
 };
 
 // Renders the backend's validation error (Pydantic 422: {"detail": [...]})
-// or a plain-string error (e.g. a 409/500 {"detail": "..."}) as readable text.
+// or a plain-string error (e.g. a 409/500/422 {"detail": "..."} — this
+// screen's own classify-rejection 422s come back this way) as readable text.
 function formatApiError(err) {
   const detail = err?.body?.detail;
   if (Array.isArray(detail)) {
     return detail.map((issue) => `${issue.loc?.slice(-1)[0] ?? "field"}: ${issue.msg}`).join("; ");
   }
+  if (typeof detail === "string") return detail;
   return err?.message ?? "Something went wrong.";
 }
 
+/**
+ * Accuracy class is NEVER a free choice here — it's derived from e/Max/Min
+ * per OIML R76-1 Table 3 (same rule as engine/classification.py, mirrored
+ * client-side in src/lib/accuracyClass.js for instant feedback; the actual
+ * POST below re-derives it server-side and is what's authoritative). This
+ * prevents registering an out-of-spec instrument (e.g. the Class III /
+ * n=15000 case that used to crash the Weighing load-sequence endpoint).
+ */
 export function InstrumentRegisterPage() {
   const navigate = useNavigate();
   const [submitError, setSubmitError] = useState(null);
   const form = useForm({ defaultValues: DEFAULT_VALUES });
+
+  const [eValue, dValue, maxCapacity, minCapacity, accuracyClassChoice] = form.watch([
+    "e_value",
+    "d_value",
+    "max_capacity",
+    "min_capacity",
+    "accuracy_class_choice",
+  ]);
+
+  const classification = useMemo(
+    () => classifyInstrument({ e: eValue, maxCapacity, minCapacity, d: dValue }),
+    [eValue, maxCapacity, minCapacity, dValue],
+  );
+
+  const hasAllThree = eValue && maxCapacity && minCapacity;
+  const isAmbiguous = classification.qualifiedClasses.length > 1;
+  const isInvalid = hasAllThree && classification.reason && classification.qualifiedClasses.length === 0;
+  const resolvedClass = isAmbiguous ? accuracyClassChoice || null : classification.qualifiedClasses[0] ?? null;
+  const canSubmit = hasAllThree && !isInvalid && (!isAmbiguous || Boolean(resolvedClass));
 
   async function onSubmit(values) {
     setSubmitError(null);
@@ -70,15 +100,17 @@ export function InstrumentRegisterPage() {
     // passed through Number()/parseFloat() — a JS `number` is a float, and
     // the backend rejects a bare float outright for exactly that reason
     // (300.6 must never round-trip through binary floating point before it
-    // reaches the Decimal-based engine). An optional numeric field left
-        // An optional numeric field left blank is sent as `null`, not an empty
-    // string, matching the contract.
+    // reaches the Decimal-based engine). min_capacity is required (Table 3
+    // classification needs it); only d_value stays genuinely optional.
     const payload = {
-      accuracy_class: values.accuracy_class,
       e_value: values.e_value,
       d_value: values.d_value.trim() === "" ? null : values.d_value,
       max_capacity: values.max_capacity,
-      min_capacity: values.min_capacity.trim() === "" ? null : values.min_capacity,
+      min_capacity: values.min_capacity,
+      // accuracy_class is only ever sent to disambiguate when e/Max/Min
+      // qualify for more than one class — otherwise omitted entirely and
+      // left to the server's own derivation (engine.classification).
+      accuracy_class: isAmbiguous ? resolvedClass : null,
       indication_type: values.indication_type,
       is_mobile: values.is_mobile,
       is_multi_interval: values.is_multi_interval,
@@ -91,7 +123,7 @@ export function InstrumentRegisterPage() {
 
     try {
       const instrument = await apiFetch("/instruments", { method: "POST", body: payload });
-      toast.success(`Instrument registered (${instrument.type_designation || instrument.id}).`);
+      toast.success(`Instrument registered — Class ${instrument.accuracy_class} (${instrument.type_designation || instrument.id}).`);
       navigate("/instruments");
     } catch (err) {
       setSubmitError(formatApiError(err));
@@ -106,60 +138,6 @@ export function InstrumentRegisterPage() {
         <CardContent className="pt-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6">
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="accuracy_class"
-                  rules={{ required: true }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Accuracy class</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {ACCURACY_CLASSES.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              Class {option}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="indication_type"
-                  rules={{ required: true }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Indication type</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {INDICATION_TYPES.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -208,9 +186,10 @@ export function InstrumentRegisterPage() {
                 <FormField
                   control={form.control}
                   name="min_capacity"
+                  rules={{ required: "Min is required — needed to derive the accuracy class (Table 3)" }}
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Min capacity (g) — optional</FormLabel>
+                      <FormLabel>Min capacity (g)</FormLabel>
                       <FormControl>
                         <Input inputMode="decimal" placeholder="e.g. 10" {...field} />
                       </FormControl>
@@ -218,6 +197,82 @@ export function InstrumentRegisterPage() {
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name="indication_type"
+                  rules={{ required: true }}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Indication type</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {INDICATION_TYPES.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="rounded-md border bg-secondary/40 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Accuracy class — derived, not chosen (OIML R76-1 Table 3)
+                </div>
+                {!hasAllThree ? (
+                  <p className="mt-1.5 text-sm text-muted-foreground">
+                    Enter e, Max, and Min above to derive the accuracy class.
+                  </p>
+                ) : isInvalid ? (
+                  <p className="mt-1.5 text-sm font-medium text-destructive">{classification.reason}</p>
+                ) : isAmbiguous ? (
+                  <div className="mt-2 grid gap-2">
+                    <p className="text-sm">
+                      These values qualify for more than one class (n={classification.n}) — pick one:
+                    </p>
+                    <FormField
+                      control={form.control}
+                      name="accuracy_class_choice"
+                      render={({ field }) => (
+                        <FormItem className="max-w-40">
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Choose a class" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {classification.qualifiedClasses.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  Class {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Badge variant="success" className="text-sm">
+                      Class {classification.qualifiedClasses[0]}
+                    </Badge>
+                    <span className="text-sm text-muted-foreground">
+                      derived from e, Max, n={classification.n}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -317,7 +372,7 @@ export function InstrumentRegisterPage() {
                 <Button type="button" variant="outline" onClick={() => navigate("/instruments")}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+                <Button type="submit" disabled={form.formState.isSubmitting || !canSubmit}>
                   {form.formState.isSubmitting ? "Registering…" : "Register instrument"}
                 </Button>
               </div>

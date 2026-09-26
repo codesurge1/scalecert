@@ -2,12 +2,13 @@ from supabase import Client
 
 from app.contracts.instrument import InstrumentIn, instrument_insert_payload
 from app.repositories.errors import run_insert, run_select
+from engine.types import AccuracyClass
 
 TABLE = "instruments"
 
 
-def insert_instrument(client: Client, registered_by: str, payload: InstrumentIn) -> dict:
-    data = instrument_insert_payload(registered_by, payload)
+def insert_instrument(client: Client, registered_by: str, payload: InstrumentIn, accuracy_class: AccuracyClass) -> dict:
+    data = instrument_insert_payload(registered_by, payload, accuracy_class)
     return run_insert(
         client.table(TABLE).insert(data),
         table=TABLE,

@@ -17,6 +17,23 @@ class InstrumentIn(BaseModel):
     db/schema.sql's `instruments` columns directly (`e_value`/`d_value`, not
     the engine's shorter `e`) since this contract's job is to validate what
     gets inserted into that table, not to feed the engine.
+
+    `accuracy_class` is NOT a free client choice — it's derived server-side
+    from e_value/max_capacity/min_capacity via
+    engine.classification.classify_instrument
+    (app.services.instruments.derive_accuracy_class), the same "server
+    derives it, the client never invents it" shape as the Weighing load
+    sequence's `L` (CLAUDE.md). It stays on this contract ONLY as an
+    optional disambiguation hint for the rare case where those values
+    qualify for more than one accuracy class — see derive_accuracy_class.
+    When exactly one class qualifies this field is ignored entirely.
+
+    `min_capacity` is REQUIRED (changed from optional) because OIML R76-1
+    Table 3 classification needs it — every class row carries its own
+    Min-capacity requirement, so classification cannot run without it. This
+    is a genuinely different question from engine.load_sequence's Min,
+    which is optional for an unrelated reason (whether Min is tested as a
+    verification anchor, not whether it's known).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -27,11 +44,11 @@ class InstrumentIn(BaseModel):
     model: Optional[str] = None
     serial_number: Optional[str] = None
 
-    accuracy_class: AccuracyClass
+    accuracy_class: Optional[AccuracyClass] = None
     e_value: StrictDecimal
     d_value: Optional[StrictDecimal] = None
     max_capacity: StrictDecimal
-    min_capacity: Optional[StrictDecimal] = None
+    min_capacity: StrictDecimal
     indication_type: IndicationType
     is_mobile: bool = False
     is_multi_interval: bool = False
@@ -95,13 +112,20 @@ def instrument_out_from_row(row: dict) -> InstrumentOut:
     return InstrumentOut(**processed)
 
 
-def instrument_insert_payload(registered_by: str, payload: InstrumentIn) -> dict:
+def instrument_insert_payload(registered_by: str, payload: InstrumentIn, accuracy_class: AccuracyClass) -> dict:
     """InstrumentIn -> the dict handed to `.table("instruments").insert()`.
     `model_dump(mode="json")` already turns every Decimal into a string (the
     same serializer proven in the Weighing contract tests), so this payload
     is JSON-safe without any extra conversion.
+
+    `accuracy_class` is passed explicitly — the SERVER-DERIVED class from
+    `app.services.instruments.derive_accuracy_class`, never
+    `payload.accuracy_class` directly: that field only disambiguates when
+    e/Max/Min qualify for more than one class (see InstrumentIn's
+    docstring) and must never be trusted as the class to store on its own.
     """
-    data = payload.model_dump(mode="json")
+    data = payload.model_dump(mode="json", exclude={"accuracy_class"})
+    data["accuracy_class"] = accuracy_class.value
     data["registered_by"] = registered_by
     return data
 

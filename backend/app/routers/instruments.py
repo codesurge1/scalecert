@@ -6,6 +6,7 @@ from app.deps import AuthContext, get_auth_context
 from app.repositories import instruments as instruments_repo
 from app.repositories import sessions as sessions_repo
 from app.repositories.errors import RepositoryError
+from app.services.instruments import AmbiguousAccuracyClass, InstrumentNotClassifiable, derive_accuracy_class
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
@@ -30,8 +31,18 @@ def _get_instrument_or_404(client, instrument_id: str) -> dict:
 
 @router.post("", response_model=InstrumentOut, status_code=201)
 def create_instrument(payload: InstrumentIn, auth: AuthContext = Depends(get_auth_context)) -> InstrumentOut:
+    # accuracy_class is never trusted from the client — derived here from
+    # e/Max/Min (and d, if given) via OIML R76-1 Table 3
+    # (engine.classification.classify_instrument). An instrument whose
+    # values fit no class at all, or ambiguously fit several without the
+    # client picking among them, is rejected before anything is written.
     try:
-        row = instruments_repo.insert_instrument(auth.client, auth.user_id, payload)
+        derived_class = derive_accuracy_class(payload)
+    except (InstrumentNotClassifiable, AmbiguousAccuracyClass) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        row = instruments_repo.insert_instrument(auth.client, auth.user_id, payload, derived_class)
     except RepositoryError as exc:
         raise HTTPException(
             status_code=403 if exc.likely_rls else 500,

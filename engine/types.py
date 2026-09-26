@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class AccuracyClass(str, Enum):
@@ -55,6 +55,26 @@ class LoadEntry:
         """True for a sourced anchor (max/min/band_transition); False for a
         placeholder fill point — see engine/load_sequence.py."""
         return self.kind is not LoadKind.FILL
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    """The result of deriving an instrument's OIML R76-1 Table 3 accuracy
+    class(es) from its e/Max/Min — see engine/classification.py. `n`
+    (Max/e) is always populated, even on failure, since it's useful in a
+    rejection message. `qualified_classes` is zero, one, or more classes —
+    the caller decides what "more than one" means (e.g. registration
+    requires the client to pick among them). `reason` explains why, only
+    when `qualified_classes` is empty.
+    """
+
+    n: Decimal
+    qualified_classes: Tuple[AccuracyClass, ...]
+    reason: Optional[str]
+
+    @property
+    def is_valid(self) -> bool:
+        return len(self.qualified_classes) > 0
 
 
 @dataclass(frozen=True)
