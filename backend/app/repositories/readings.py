@@ -1,3 +1,5 @@
+from typing import Optional
+
 from supabase import Client
 
 from app.repositories.errors import run_insert, run_select
@@ -12,17 +14,33 @@ def insert_reading(
     *,
     session_id: str,
     entered_by: str,
+    test_type: str,
     sequence_no: int,
-    direction: str,
+    direction: Optional[str] = None,
+    series_no: Optional[int] = None,
+    position_no: Optional[int] = None,
     data: dict,
 ) -> dict:
+    """`test_type` is required (no default) so every call site says
+    explicitly which test it's writing for — `db/schema.sql`'s
+    `test_readings` table is shared across all test_type values (the
+    "hybrid design", docs/architecture.md), including 'weighing' covering
+    both the full Weighing load sequence AND its zero/tare-device variant
+    (distinguished from each other by `direction`: always set for a
+    Weighing-sequence reading, always null for a zero/tare one — see
+    app/contracts/zero_tare.py). `series_no`/`position_no` are Repeatability's
+    and Eccentricity's own columns respectively; every other test type
+    leaves them null.
+    """
     return run_insert(
         client.table(READINGS_TABLE).insert(
             {
                 "session_id": session_id,
-                "test_type": "weighing",
+                "test_type": test_type,
                 "sequence_no": sequence_no,
                 "direction": direction,
+                "series_no": series_no,
+                "position_no": position_no,
                 "data": data,
                 "entered_by": entered_by,
             }
@@ -59,12 +77,12 @@ def delete_reading(client: Client, reading_id: str) -> None:
     client.table(READINGS_TABLE).delete().eq("id", reading_id).execute()
 
 
-def insert_result(client: Client, *, session_id: str, reading_id: str, result: dict, passed: bool) -> dict:
+def insert_result(client: Client, *, session_id: str, test_type: str, reading_id: str, result: dict, passed: bool) -> dict:
     return run_insert(
         client.table(RESULTS_TABLE).insert(
             {
                 "session_id": session_id,
-                "test_type": "weighing",
+                "test_type": test_type,
                 "reading_id": reading_id,
                 "result": result,
                 "passed": passed,

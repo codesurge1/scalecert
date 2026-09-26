@@ -8,6 +8,9 @@ import { InstrumentRegisterPage } from "@/pages/InstrumentRegisterPage";
 import { InstrumentDetailPage } from "@/pages/InstrumentDetailPage";
 import { SessionPage } from "@/pages/SessionPage";
 import { WeighingSessionPage } from "@/pages/WeighingSessionPage";
+import { ZeroTareSessionPage } from "@/pages/ZeroTareSessionPage";
+import { RepeatabilitySessionPage } from "@/pages/RepeatabilitySessionPage";
+import { EccentricitySessionPage } from "@/pages/EccentricitySessionPage";
 
 export default function App() {
   return (
@@ -22,6 +25,9 @@ export default function App() {
           <Route path="/instruments/:id" element={<InstrumentDetailPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
           <Route path="/sessions/:id/weighing" element={<WeighingSessionPage />} />
+          <Route path="/sessions/:id/zero-tare" element={<ZeroTareSessionPage />} />
+          <Route path="/sessions/:id/repeatability" element={<RepeatabilitySessionPage />} />
+          <Route path="/sessions/:id/eccentricity" element={<EccentricitySessionPage />} />
         </Route>
       </Route>
 

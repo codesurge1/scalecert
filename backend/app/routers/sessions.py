@@ -1,9 +1,18 @@
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.contracts.common import SessionStatus, TestType
+from app.contracts.eccentricity import (
+    EccentricityReadingRecordOut,
+    EccentricityReadingSubmitIn,
+    EccentricityResultOut,
+    EccentricitySetupOut,
+    reading_and_result_to_record_out as eccentricity_reading_and_result_to_record_out,
+)
 from app.contracts.instrument import instrument_params_from_row
+from app.contracts.repeatability import RepeatabilityReadingSubmitIn, RepeatabilitySeriesOut
 from app.contracts.session import SessionIn, SessionOut, session_out_from_rows
 from app.contracts.weighing import (
     WeighingReadingRecordOut,
@@ -12,12 +21,22 @@ from app.contracts.weighing import (
     WeighingSequenceEntryOut,
     reading_and_result_to_record_out,
 )
+from app.contracts.zero_tare import (
+    ZeroTareCheckOut,
+    ZeroTareReadingRecordOut,
+    ZeroTareReadingSubmitIn,
+    ZeroTareResultOut,
+    reading_and_result_to_record_out as zero_tare_reading_and_result_to_record_out,
+)
 from app.deps import AuthContext, get_auth_context
 from app.repositories import instruments as instruments_repo
 from app.repositories import readings as readings_repo
 from app.repositories import sessions as sessions_repo
 from app.repositories.errors import RepositoryError
+from app.services import eccentricity as eccentricity_service
+from app.services import repeatability as repeatability_service
 from app.services import weighing as weighing_service
+from app.services import zero_tare as zero_tare_service
 from app.services.sessions import SessionNotDraft, ensure_session_is_draft
 from engine.types import VerificationType
 
@@ -164,6 +183,7 @@ def submit_weighing_reading(
             auth.client,
             session_id=session_id,
             entered_by=auth.user_id,
+            test_type=TestType.WEIGHING.value,
             sequence_no=payload.sequence_no,
             direction=payload.direction.value,
             data=submission.reading.model_dump(mode="json"),
@@ -178,6 +198,7 @@ def submit_weighing_reading(
         readings_repo.insert_result(
             auth.client,
             session_id=session_id,
+            test_type=TestType.WEIGHING.value,
             reading_id=reading_row["id"],
             result=submission.result_out.model_dump(mode="json"),
             passed=submission.result_out.passed,
@@ -204,6 +225,346 @@ def submit_weighing_reading(
             actor_id=auth.user_id,
             action="weighing_reading_submitted",
             data={"sequence_no": payload.sequence_no, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Zero/tare device accuracy — a Weighing variant (test_type='weighing', no
+# own test_type in db/schema.sql). Distinguished from a regular Weighing
+# load-sequence reading by `direction`: always set for the latter, always
+# null for a zero/tare reading. See app/contracts/zero_tare.py.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/zero-tare/checks", response_model=list[ZeroTareCheckOut])
+def get_zero_tare_checks(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[ZeroTareCheckOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    return zero_tare_service.checks_with_mpe(instrument, verification_type)
+
+
+@router.get("/{session_id}/zero-tare/readings", response_model=list[ZeroTareReadingRecordOut])
+def list_zero_tare_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[ZeroTareReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+
+    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    reading_rows = [row for row in reading_rows if row.get("direction") is None]
+    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_sequence_no = {
+        reading_row["sequence_no"]: (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [zero_tare_reading_and_result_to_record_out(r, res) for r, res in latest_by_sequence_no.values()]
+    records.sort(key=lambda record: record.sequence_no)
+    return records
+
+
+@router.post("/{session_id}/zero-tare/readings", response_model=ZeroTareResultOut, status_code=201)
+def submit_zero_tare_reading(
+    session_id: str,
+    payload: ZeroTareReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> ZeroTareResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = zero_tare_service.compute_result_for_submission(payload, instrument, verification_type)
+    except zero_tare_service.SequenceNumberOutOfRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.WEIGHING.value,
+            sequence_no=payload.sequence_no,
+            direction=None,
+            data=submission.reading.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.WEIGHING.value,
+            reading_id=reading_row["id"],
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="zero_tare_reading_submitted",
+            data={"sequence_no": payload.sequence_no, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Repeatability — two independent 10-reading series at fixed loads, no E0,
+# a series' verdict a property of the whole series (spread), not any single
+# reading. See app/services/repeatability.py.
+# ---------------------------------------------------------------------------
+
+
+def _repeatability_stored_readings(client, session_id: str, series_no: int) -> list[tuple[int, Decimal, Decimal]]:
+    """Fetch + dedupe-to-latest this series' readings as (sequence_no, I,
+    delta_l) tuples — the shape app.services.repeatability.compute_series
+    expects. Same last-write-wins convention as Weighing's readings GET
+    (list_readings is ordered by created_at, so a later dict-write for the
+    same sequence_no wins)."""
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.REPEATABILITY.value)
+    reading_rows = [row for row in reading_rows if row["series_no"] == series_no]
+    latest_by_sequence_no = {row["sequence_no"]: row for row in reading_rows}
+    return [
+        (row["sequence_no"], Decimal(row["data"]["I"]), Decimal(row["data"]["delta_l"]))
+        for row in latest_by_sequence_no.values()
+    ]
+
+
+@router.get("/{session_id}/repeatability/readings", response_model=list[RepeatabilitySeriesOut])
+def list_repeatability_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[RepeatabilitySeriesOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    return [
+        repeatability_service.compute_series(
+            instrument, verification_type, series_no, _repeatability_stored_readings(auth.client, session_id, series_no)
+        )
+        for series_no in (1, 2)
+    ]
+
+
+@router.post("/{session_id}/repeatability/readings", response_model=RepeatabilitySeriesOut, status_code=201)
+def submit_repeatability_reading(
+    session_id: str,
+    payload: RepeatabilityReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> RepeatabilitySeriesOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    existing = _repeatability_stored_readings(auth.client, session_id, payload.series_no)
+    submission = repeatability_service.compute_result_for_submission(payload, instrument, verification_type, existing)
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.REPEATABILITY.value,
+            sequence_no=payload.sequence_no,
+            series_no=payload.series_no,
+            data={"I": str(payload.I), "delta_l": str(payload.delta_l)},
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.REPEATABILITY.value,
+            reading_id=reading_row["id"],
+            result={"E": str(submission.this_reading_E), "within_mpe": submission.this_reading_within_mpe},
+            passed=submission.this_reading_within_mpe,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="repeatability_reading_submitted",
+            data={
+                "series_no": payload.series_no,
+                "sequence_no": payload.sequence_no,
+                "within_mpe": submission.this_reading_within_mpe,
+            },
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.series_out
+
+
+# ---------------------------------------------------------------------------
+# Eccentricity — 4 independent receptor positions, each with its OWN E0
+# (re-measured before each position). See app/services/eccentricity.py.
+# ---------------------------------------------------------------------------
+
+
+def _eccentricity_stored_records(client, session_id: str) -> dict[int, EccentricityReadingRecordOut]:
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.ECCENTRICITY.value)
+    result_rows = readings_repo.list_results(client, session_id=session_id, test_type=TestType.ECCENTRICITY.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_position: dict[int, tuple[dict, dict]] = {}
+    for row in reading_rows:  # ordered by created_at -> last write wins
+        if row["id"] in results_by_reading_id:
+            latest_by_position[row["position_no"]] = (row, results_by_reading_id[row["id"]])
+
+    return {
+        position_no: eccentricity_reading_and_result_to_record_out(reading_row, result_row)
+        for position_no, (reading_row, result_row) in latest_by_position.items()
+    }
+
+
+@router.get("/{session_id}/eccentricity/setup", response_model=EccentricitySetupOut)
+def get_eccentricity_setup(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> EccentricitySetupOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    return eccentricity_service.setup_out(instrument, verification_type)
+
+
+@router.get("/{session_id}/eccentricity/readings", response_model=list[EccentricityReadingRecordOut])
+def list_eccentricity_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[EccentricityReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    records = list(_eccentricity_stored_records(auth.client, session_id).values())
+    records.sort(key=lambda record: record.position_no)
+    return records
+
+
+@router.post("/{session_id}/eccentricity/readings", response_model=EccentricityResultOut, status_code=201)
+def submit_eccentricity_reading(
+    session_id: str,
+    payload: EccentricityReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> EccentricityResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    submission = eccentricity_service.compute_result_for_submission(payload, instrument, verification_type)
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.ECCENTRICITY.value,
+            sequence_no=payload.position_no,
+            position_no=payload.position_no,
+            data=submission.reading.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.ECCENTRICITY.value,
+            reading_id=reading_row["id"],
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="eccentricity_reading_submitted",
+            data={"position_no": payload.position_no, "passed": submission.result_out.passed},
         )
     except Exception as exc:
         logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
