@@ -324,3 +324,23 @@ Full suite: **265 passed** (engine 156 incl. the 43 new classification tests, ba
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification (per-sub-range e/n/Min) is a known future extension — not handled by `classify_instrument`, same limitation as `load_sequence`.
 - Multi-interval page-6 sub-ranges (e1/Max1/d1/n1 and beyond) have no schema column yet — rendered blank on the form for now.
+
+---
+
+### [2026-09-26] — fix: remove forced test sequence - tests run in any order
+
+**Investigated a reported forced-sequence bug — found none in the current code.** RRSL (Deputy Director Sharma) confirmed tests are technician-selectable in any order, no fixed sequence, matching `docs/plan.md`'s own per-session-test-selector requirement ("Tests run in any order"), and the task asked to strip any cross-test-status gating from the session overview. Audited every place a test's availability is decided: `src/lib/testChecklist.js` (`isSelectable`), `src/components/session/AddTestDialog.jsx`, `src/pages/SessionPage.jsx`, `src/pages/WeighingSessionPage.jsx` on the frontend, and `app/routers/sessions.py`, `app/routers/instruments.py`, `app/services/sessions.py` (`ensure_session_is_draft`), `app/repositories/{sessions,readings}.py` on the backend. Found no logic anywhere that conditions one test's availability on another test's status (not-started/in-progress/complete) — `isSelectable` already takes only `(row, instrument)`, never session/reading/progress state; the only two gates present were already the two legitimate ones this task explicitly says to keep: (1) applicability (`naReason`, driven by instrument properties) and (2) not-yet-implemented (`row.key !== "weighing"`, since the other six tests have no form built yet, always labeled "Coming soon"/"N/A", never "complete X first"). The only status check anywhere in the flow is `ensure_session_is_draft` — a session-lifecycle gate (readings rejected once a session leaves `draft`), not a cross-test ordering rule; it stays, per the task's own instruction that draft-status checks aren't sequencing.
+
+**Hardened against future regression rather than leaving it implicit.** Since there was no bug to remove, the change is defensive documentation + comments, so the "any order" guarantee can't silently erode as the other six tests get real forms in later tasks: added an explicit comment block above `isSelectable` naming its two legitimate gates and stating its signature (`row`, `instrument` only) is deliberately shaped to make a sequence dependency impossible to add without changing the function's contract; added matching "no forced sequence" notes to `AddTestDialog.jsx`'s and `SessionPage.jsx`'s own docstrings; added a new bullet to `docs/architecture.md`'s Navigation section stating the guarantee explicitly, citing the RRSL finding, and naming exactly which two gates are legitimate and why the backend's one status check isn't a third.
+
+`npm run build` succeeds (720.48 kB bundle, unchanged). Full suite: **275 passed** (unchanged — no backend ordering check existed to remove, so no test additions were needed; every existing test still passes). Did not touch the Weighing form, the engine, RLS, applicability rules, or the schema, per the task's explicit scope limits.
+
+**Next:** Verify on the preview deploy (checklist in the branch reply) that the Add-test picker and session overview behave identically to before for the one real test (Weighing) — this task changed no runtime behavior, only comments/docs, so there should be zero visible difference. When the per-session test selector (`docs/plan.md` Phase 3) eventually gives the other five test_types real forms and `session_test_selection` rows, `isSelectable`'s (row, instrument)-only signature is the guardrail to preserve — any change that threads in session/progress state to compute selectability should be treated as a regression of this task's finding, not a feature.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification (per-sub-range e/n/Min) is a known future extension — not handled by `classify_instrument`, same limitation as `load_sequence`.
+- Multi-interval page-6 sub-ranges (e1/Max1/d1/n1 and beyond) have no schema column yet — rendered blank on the form for now.
