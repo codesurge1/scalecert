@@ -189,3 +189,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — Weighing entry rebuilt as an OIML R 76-2 form table (bidirectional)
+
+**Done:** Replaced the card-per-reading `LoadSequenceTable`/`ReadingEntryPanel` pair with `WeighingFormTable` — a single table faithful to the OIML R 76-2 "1 Weighing performance" form's own layout (page 10 of the standard, extracted for reference via a temp `pypdf` venv since `pdftoppm`/poppler-utils and the system Python's pip were both broken/absent): header block (Application no./Type designation read-only, Date/Observer editable, e and "resolution during test" = `COALESCE(d_value, e_value)`, an environmental-conditions table, the zero-device-status and initial-zero-setting radio rows, and the formula line `E = I + ½e − ΔL − L` / `Ec = E − E0` printed verbatim), a main data table (one row per generated load, `L`/`mpe` read-only, paired ↓/↑ column groups for editable I/ΔL and computed E/Ec, a per-row PASS/FAIL/Pending badge), a single `E0` field, and an overall "Check if |Ec| ≤ |mpe|" PASSED/FAILED/INCOMPLETE box. Framed explicitly as a faithful reproduction of the FORMAT for data entry, not a copy of the copyrighted OIML document. Implemented the direction mapping exactly as specified — the form's "↓" is the increasing-load pass (API `direction: "up"`), "↑" is the decreasing-load pass (API `direction: "down"`) — documented in-code at `FORM_COLUMNS`. Editing a direction's I/ΔL submits `POST .../weighing/readings` on ΔL-blur or Enter. Two pre-existing gaps carried forward and flagged, not solved (both require backend work out of scope here): no `PATCH` for `test_sessions`/`session_test_selection`, so all header-block fields are local-only state, noted in the UI; no `GET .../weighing/readings` list route, so filled table cells are refresh-fragile, noted via a read-only banner on non-draft sessions. Numeric fields stay strings from input to POST body throughout, same convention as the rest of the frontend. `npm run build` succeeds. Did not touch backend/engine/vercel.json; no PDF, submit-for-review/approve, or public verify screens. Updated `docs/architecture.md`'s Frontend section and STATUS line.
+
+**Next:** Verify on the preview deploy (checklist in the branch reply); then submit-for-review/approve/return, PDF generation (which will reuse this exact form layout), and the public verify page. Adding the session/selection-update endpoint and the readings-list endpoint would close both flagged gaps.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
+import { useSession as useAuthSession } from "@/lib/supabase";
 import { PageHeader } from "@/components/AppShell";
-import { LoadSequenceTable } from "@/components/weighing/LoadSequenceTable";
-import { ReadingEntryPanel } from "@/components/weighing/ReadingEntryPanel";
+import { WeighingFormTable } from "@/components/weighing/WeighingFormTable";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,20 +22,13 @@ function StatusBadge({ status }) {
 
 export function SessionPage() {
   const { id } = useParams();
+  const authSession = useAuthSession();
 
   // undefined = loading, null = load failed, object = loaded.
   const [session, setSession] = useState(undefined);
   const [instrument, setInstrument] = useState(undefined);
   const [sequence, setSequence] = useState(undefined);
   const [error, setError] = useState(null);
-
-  // Readings recorded THIS page load, keyed "<sequence_no>-<direction>".
-  // There is no GET .../weighing/readings list route yet (a later task) —
-  // the API only supports submitting one, not listing what's already been
-  // submitted — so a page refresh currently loses this table. Noted in
-  // docs/architecture.md rather than worked around here.
-  const [readingsByKey, setReadingsByKey] = useState({});
-  const [selectedSeq, setSelectedSeq] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -47,7 +40,6 @@ export function SessionPage() {
         if (cancelled) return;
         setSession(sessionData);
         setSequence(sequenceData);
-        setSelectedSeq((current) => current ?? sequenceData[0]?.sequence_no ?? null);
         return apiFetch(`/instruments/${sessionData.instrument_id}`);
       })
       .then((instrumentData) => {
@@ -64,15 +56,6 @@ export function SessionPage() {
       cancelled = true;
     };
   }, [id, reloadKey]);
-
-  const selectedEntry = useMemo(
-    () => sequence?.find((entry) => entry.sequence_no === selectedSeq) ?? null,
-    [sequence, selectedSeq],
-  );
-
-  function handleSubmitted(sequenceNo, direction, result) {
-    setReadingsByKey((prev) => ({ ...prev, [`${sequenceNo}-${direction}`]: result }));
-  }
 
   if (session === undefined) {
     return (
@@ -161,21 +144,22 @@ export function SessionPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <LoadSequenceTable
-            sequence={sequence}
-            readingsByKey={readingsByKey}
-            selected={selectedEntry}
-            onSelect={setSelectedSeq}
-          />
-          <ReadingEntryPanel
-            sessionId={id}
-            sessionStatus={session.status}
-            entry={selectedEntry}
-            onSubmitted={handleSubmitted}
-          />
-        </div>
+        <WeighingFormTable
+          sessionId={id}
+          sessionStatus={session.status}
+          instrument={instrument}
+          sequence={sequence}
+          observerDefault={authSession?.user?.email}
+        />
       )}
+
+      {session.status !== "draft" ? (
+        <p className="text-sm font-medium text-warning-foreground">
+          This session is "{session.status}", not draft — the form above is read-only. Entered
+          readings from earlier in this draft may not reappear here: there is no endpoint yet to
+          list a session's previously submitted readings (tracked gap; see docs/architecture.md).
+        </p>
+      ) : null}
     </div>
   );
 }
