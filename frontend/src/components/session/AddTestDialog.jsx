@@ -12,22 +12,26 @@ import {
 import { TEST_ROWS, isSelectable } from "@/lib/testChecklist";
 
 /**
- * "Add test" -> pick from the 7 -> that test's table opens. Only Weighing
- * is actually selectable today (and only when it isn't N/A for this
- * instrument, though Weighing never is); the other six are shown, greyed,
- * with the reason (N/A for the three conditional tests, "Coming soon" for
- * the rest, since their forms aren't built yet). This is the discovery
- * surface for the full checklist — the session overview itself shows
- * Weighing directly too, since it's always already added (its
+ * "Add test" -> pick from the 7 -> that test's table opens. Weighing,
+ * Zero/tare device accuracy, Repeatability, and Eccentricity are
+ * selectable today (each opens its own route, `row.route(sessionId)` —
+ * see src/lib/testChecklist.js), each subject only to its own applicability
+ * check (none of the four have one — they're universal); Discrimination/
+ * Tilting/Sensitivity show their N/A reason when inapplicable, or "Coming
+ * soon" otherwise, since their forms aren't built yet. This is the
+ * discovery surface for the full checklist — the session overview itself
+ * shows Weighing directly too, since it's always already added (its
  * session_test_selection row is created unconditionally at session
- * creation), so picking it here just lands on the same page "Open" would.
+ * creation), so picking Weighing here just lands on the same page "Open"
+ * would.
  *
  * No forced sequence (docs/architecture.md, RRSL-confirmed): `isSelectable`
  * takes only the row and the instrument, never any other test's progress,
- * so Weighing is openable here regardless of whether any other test has
- * been touched, and the disabled reason shown for a non-selectable row is
- * always "N/A" (applicability) or "Coming soon" (not built yet) — never
- * something implying another test must be completed first.
+ * so any implemented test is openable here regardless of whether another
+ * test has been touched, and the disabled reason shown for a
+ * non-selectable row is always "N/A" (applicability) or "Coming soon" (not
+ * built yet) — never something implying another test must be completed
+ * first.
  */
 export function AddTestDialog({ sessionId, instrument }) {
   const navigate = useNavigate();
@@ -36,7 +40,7 @@ export function AddTestDialog({ sessionId, instrument }) {
   function handlePick(row) {
     if (!isSelectable(row, instrument)) return;
     setOpen(false);
-    navigate(`/sessions/${sessionId}/weighing`);
+    navigate(row.route(sessionId));
   }
 
   return (

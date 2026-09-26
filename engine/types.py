@@ -94,3 +94,49 @@ class WeighingResult:
     margin: Decimal
     passed: bool
     mpe_lookup: MpeResult
+
+
+@dataclass(frozen=True)
+class RepeatabilityReadingResult:
+    """One reading within a Repeatability series (engine/repeatability.py).
+    Unlike WeighingResult, there is no Ec/E0 — E itself is checked directly
+    against mpe (R76-1 A.4.5's own construction of this test)."""
+
+    I: Decimal
+    delta_l: Decimal
+    E: Decimal
+    within_mpe: bool
+
+
+@dataclass(frozen=True)
+class RepeatabilitySeriesResult:
+    """The full derivation for one Repeatability series (1 or 2) — a fixed
+    load tested with (nominally) 10 readings. Two independent pass criteria
+    are carried explicitly, not collapsed into a single boolean too early:
+    `all_within_mpe` (every reading's own |E| <= mpe) and `spread_within_mpe`
+    (Emax - Emin, using signed E, <= mpe). `passed` is true only if both are.
+    """
+
+    series_no: int
+    L: Decimal
+    mpe: Decimal
+    mpe_lookup: MpeResult
+    readings: Tuple[RepeatabilityReadingResult, ...]
+    e_max: Decimal
+    e_min: Decimal
+    spread: Decimal
+    all_within_mpe: bool
+    spread_within_mpe: bool
+    passed: bool
+
+
+@dataclass(frozen=True)
+class EccentricityPositionResult:
+    """One of the (up to) 4 Eccentricity receptor positions
+    (engine/eccentricity.py) — wraps a full WeighingResult, since the
+    change-point math is identical to Weighing; the position-specific part
+    (position_no, and that E0 is independently supplied per position rather
+    than shared) lives at this wrapper level, not in the math itself."""
+
+    position_no: int
+    weighing_result: WeighingResult
