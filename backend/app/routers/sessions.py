@@ -3,7 +3,14 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.contracts.common import SessionStatus, TestType
+from app.contracts.common import IndicationType, SessionStatus, TestType
+from app.contracts.discrimination import (
+    DiscriminationCheckOut,
+    DiscriminationReadingRecordOut,
+    DiscriminationReadingSubmitIn,
+    DiscriminationResultOut,
+    reading_and_result_to_record_out as discrimination_reading_and_result_to_record_out,
+)
 from app.contracts.eccentricity import (
     EccentricityReadingRecordOut,
     EccentricityReadingSubmitIn,
@@ -13,7 +20,15 @@ from app.contracts.eccentricity import (
 )
 from app.contracts.instrument import instrument_params_from_row
 from app.contracts.repeatability import RepeatabilityReadingSubmitIn, RepeatabilitySeriesOut
+from app.contracts.sensitivity import (
+    SensitivityCheckOut,
+    SensitivityReadingRecordOut,
+    SensitivityReadingSubmitIn,
+    SensitivityResultOut,
+    reading_and_result_to_record_out as sensitivity_reading_and_result_to_record_out,
+)
 from app.contracts.session import SessionIn, SessionOut, session_out_from_rows
+from app.contracts.tilting import TiltingReadingSubmitIn, TiltingStateOut
 from app.contracts.weighing import (
     WeighingReadingRecordOut,
     WeighingReadingSubmitIn,
@@ -33,8 +48,11 @@ from app.repositories import instruments as instruments_repo
 from app.repositories import readings as readings_repo
 from app.repositories import sessions as sessions_repo
 from app.repositories.errors import RepositoryError
+from app.services import discrimination as discrimination_service
 from app.services import eccentricity as eccentricity_service
 from app.services import repeatability as repeatability_service
+from app.services import sensitivity as sensitivity_service
+from app.services import tilting as tilting_service
 from app.services import weighing as weighing_service
 from app.services import zero_tare as zero_tare_service
 from app.services.sessions import SessionNotDraft, ensure_session_is_draft
@@ -570,3 +588,349 @@ def submit_eccentricity_reading(
         logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
 
     return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Discrimination — THREE distinct sub-procedures (analog/non-self-indicating/
+# digital), the applicable one DERIVED from the instrument's own
+# indication_type, never a client-submitted flag. See
+# app/services/discrimination.py.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/discrimination/checks", response_model=list[DiscriminationCheckOut])
+def get_discrimination_checks(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DiscriminationCheckOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    return discrimination_service.checks_with_mpe(instrument, verification_type)
+
+
+@router.get("/{session_id}/discrimination/readings", response_model=list[DiscriminationReadingRecordOut])
+def list_discrimination_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DiscriminationReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+
+    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.DISCRIMINATION.value)
+    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.DISCRIMINATION.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_sequence_no = {
+        reading_row["sequence_no"]: (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [discrimination_reading_and_result_to_record_out(r, res) for r, res in latest_by_sequence_no.values()]
+    records.sort(key=lambda record: record.sequence_no)
+    return records
+
+
+@router.post("/{session_id}/discrimination/readings", response_model=DiscriminationResultOut, status_code=201)
+def submit_discrimination_reading(
+    session_id: str,
+    payload: DiscriminationReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> DiscriminationResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = discrimination_service.compute_result_for_submission(payload, instrument, verification_type)
+    except discrimination_service.SequenceNumberOutOfRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except discrimination_service.MissingFieldsForVariant as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.DISCRIMINATION.value,
+            sequence_no=payload.sequence_no,
+            data=submission.reading_data,
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.DISCRIMINATION.value,
+            reading_id=reading_row["id"],
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="discrimination_reading_submitted",
+            data={"sequence_no": payload.sequence_no, "variant": submission.variant, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity — non-self-indicating instruments only (clause 6.1); pass
+# threshold tiered by accuracy class AND Max. See
+# app/services/sensitivity.py.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/sensitivity/checks", response_model=list[SensitivityCheckOut])
+def get_sensitivity_checks(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[SensitivityCheckOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    return sensitivity_service.checks_with_mpe(instrument, verification_type)
+
+
+@router.get("/{session_id}/sensitivity/readings", response_model=list[SensitivityReadingRecordOut])
+def list_sensitivity_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[SensitivityReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+
+    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.SENSITIVITY.value)
+    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.SENSITIVITY.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_sequence_no = {
+        reading_row["sequence_no"]: (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [sensitivity_reading_and_result_to_record_out(r, res) for r, res in latest_by_sequence_no.values()]
+    records.sort(key=lambda record: record.sequence_no)
+    return records
+
+
+@router.post("/{session_id}/sensitivity/readings", response_model=SensitivityResultOut, status_code=201)
+def submit_sensitivity_reading(
+    session_id: str,
+    payload: SensitivityReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> SensitivityResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    if instrument.indication_type is not IndicationType.NON_SELF_INDICATING:
+        raise HTTPException(status_code=422, detail="Sensitivity applies only to non-self-indicating instruments")
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = sensitivity_service.compute_result_for_submission(payload, instrument, verification_type)
+    except sensitivity_service.SequenceNumberOutOfRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.SENSITIVITY.value,
+            sequence_no=payload.sequence_no,
+            data={"permanent_displacement_mm": str(payload.permanent_displacement_mm)},
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.SENSITIVITY.value,
+            reading_id=reading_row["id"],
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="sensitivity_reading_submitted",
+            data={"sequence_no": payload.sequence_no, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Tilting — mobile instruments only (clause 4.18); the minimal 8.3.3/4.18
+# slice (reference + 4 tilted positions x unloaded/mid-load/Max), whole-set
+# pass criteria recomputed on every GET/POST. `sequence_no` encodes the
+# phase (0=unloaded, 1=loaded_l, 2=loaded_max); `position_no` is the tilt
+# position (1-5). See app/services/tilting.py.
+# ---------------------------------------------------------------------------
+
+_TILT_PHASE_TO_SEQUENCE_NO = {"unloaded": 0, "loaded_l": 1, "loaded_max": 2}
+_TILT_SEQUENCE_NO_TO_PHASE = {v: k for k, v in _TILT_PHASE_TO_SEQUENCE_NO.items()}
+
+
+def _tilting_stored_readings(client, session_id: str) -> list[tuple]:
+    """Fetch + dedupe-to-latest (per phase, position_no) Tilting readings as
+    (phase, position_no, I, delta_l) tuples — the shape
+    app.services.tilting.compute_state expects."""
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.TILTING.value)
+    latest_by_key = {}
+    for row in reading_rows:  # ordered by created_at -> last write wins
+        latest_by_key[(row["sequence_no"], row["position_no"])] = row
+    return [
+        (_TILT_SEQUENCE_NO_TO_PHASE[row["sequence_no"]], row["position_no"], Decimal(row["data"]["I"]), Decimal(row["data"]["delta_l"]))
+        for row in latest_by_key.values()
+    ]
+
+
+@router.get("/{session_id}/tilting/readings", response_model=TiltingStateOut)
+def get_tilting_state(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> TiltingStateOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    stored = _tilting_stored_readings(auth.client, session_id)
+    return tilting_service.compute_state(instrument, verification_type, stored)
+
+
+@router.post("/{session_id}/tilting/readings", response_model=TiltingStateOut, status_code=201)
+def submit_tilting_reading(
+    session_id: str,
+    payload: TiltingReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> TiltingStateOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    if not instrument.is_mobile:
+        raise HTTPException(status_code=422, detail="Tilting applies only to mobile instruments")
+    verification_type = VerificationType(session_row["verification_type"])
+
+    # Fetch what's already stored BEFORE inserting, then merge the new
+    # submission into that list locally (last-write-wins on the same
+    # (phase, position_no), same convention as everywhere else) rather than
+    # re-fetching after the insert — this can't disagree with itself over
+    # read-after-write timing, and matches Repeatability's own router
+    # pattern exactly.
+    existing = _tilting_stored_readings(auth.client, session_id)
+    merged = {(phase, position_no): (I, delta_l) for phase, position_no, I, delta_l in existing}
+    merged[(payload.phase, payload.position_no)] = (payload.I, payload.delta_l)
+    stored = [(phase, position_no, I, delta_l) for (phase, position_no), (I, delta_l) in merged.items()]
+
+    state = tilting_service.compute_state(instrument, verification_type, stored)
+    this_row = next((r for r in state.readings if r.phase == payload.phase and r.position_no == payload.position_no), None)
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.TILTING.value,
+            sequence_no=_TILT_PHASE_TO_SEQUENCE_NO[payload.phase],
+            position_no=payload.position_no,
+            data={"I": str(payload.I), "delta_l": str(payload.delta_l)},
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.TILTING.value,
+            reading_id=reading_row["id"],
+            result={"E": str(this_row.E) if this_row else None, "Ec": str(this_row.Ec) if this_row and this_row.Ec is not None else None},
+            passed=None,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="tilting_reading_submitted",
+            data={"phase": payload.phase, "position_no": payload.position_no},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return state

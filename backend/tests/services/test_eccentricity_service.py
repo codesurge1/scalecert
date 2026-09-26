@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from app.contracts.common import IndicationType
 from app.contracts.instrument import InstrumentParams
 from app.contracts.eccentricity import EccentricityReadingSubmitIn
 from app.services.eccentricity import build_load, compute_result_for_submission
@@ -14,6 +15,9 @@ _INSTRUMENT = InstrumentParams(
     e_value=D("1"),
     max_capacity=D("3000"),
     min_capacity=D("10"),
+    indication_type=IndicationType.DIGITAL,
+    is_mobile=False,
+    d_value=None,
 )
 
 

@@ -112,12 +112,29 @@ def test_instrument_out_from_row_handles_float_from_postgrest_exactly():
 
 
 def test_instrument_params_from_row_handles_float_and_none_min():
-    row = dict(accuracy_class="III", e_value=1.0, max_capacity=5000.0, min_capacity=None)
+    row = dict(
+        accuracy_class="III", e_value=1.0, max_capacity=5000.0, min_capacity=None,
+        indication_type="digital", is_mobile=False, d_value=None,
+    )
     params = instrument_params_from_row(row)
     assert params.accuracy_class is AccuracyClass.III
     assert params.e_value == D("1")
     assert params.max_capacity == D("5000")
     assert params.min_capacity is None
+    assert params.indication_type.value == "digital"
+    assert params.is_mobile is False
+    assert params.d_value is None
+
+
+def test_instrument_params_from_row_carries_indication_type_is_mobile_and_d_value():
+    row = dict(
+        accuracy_class="II", e_value=1.0, max_capacity=5000.0, min_capacity=10.0,
+        indication_type="non_self_indicating", is_mobile=True, d_value=0.5,
+    )
+    params = instrument_params_from_row(row)
+    assert params.indication_type.value == "non_self_indicating"
+    assert params.is_mobile is True
+    assert params.d_value == D("0.5")
 
 
 # ---------------------------------------------------------------------------

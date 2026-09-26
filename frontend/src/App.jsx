@@ -11,6 +11,9 @@ import { WeighingSessionPage } from "@/pages/WeighingSessionPage";
 import { ZeroTareSessionPage } from "@/pages/ZeroTareSessionPage";
 import { RepeatabilitySessionPage } from "@/pages/RepeatabilitySessionPage";
 import { EccentricitySessionPage } from "@/pages/EccentricitySessionPage";
+import { DiscriminationSessionPage } from "@/pages/DiscriminationSessionPage";
+import { SensitivitySessionPage } from "@/pages/SensitivitySessionPage";
+import { TiltingSessionPage } from "@/pages/TiltingSessionPage";
 
 export default function App() {
   return (
@@ -28,6 +31,9 @@ export default function App() {
           <Route path="/sessions/:id/zero-tare" element={<ZeroTareSessionPage />} />
           <Route path="/sessions/:id/repeatability" element={<RepeatabilitySessionPage />} />
           <Route path="/sessions/:id/eccentricity" element={<EccentricitySessionPage />} />
+          <Route path="/sessions/:id/discrimination" element={<DiscriminationSessionPage />} />
+          <Route path="/sessions/:id/sensitivity" element={<SensitivitySessionPage />} />
+          <Route path="/sessions/:id/tilting" element={<TiltingSessionPage />} />
         </Route>
       </Route>
 

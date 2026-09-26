@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from app.contracts.common import IndicationType
 from app.contracts.instrument import InstrumentParams
 from app.contracts.repeatability import RepeatabilityReadingSubmitIn
 from app.services.repeatability import build_series_load, compute_result_for_submission, compute_series, series_mpe
@@ -18,6 +19,9 @@ _INSTRUMENT = InstrumentParams(
     e_value=D("1"),
     max_capacity=D("1000"),
     min_capacity=D("10"),
+    indication_type=IndicationType.DIGITAL,
+    is_mobile=False,
+    d_value=None,
 )
 
 

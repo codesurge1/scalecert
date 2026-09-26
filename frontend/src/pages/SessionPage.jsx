@@ -23,15 +23,6 @@ const VERIFICATION_TYPE_LABELS = {
   in_service: "In-service verification",
 };
 
-// The four tests with working forms today — each listed directly on the
-// overview with live status, same treatment Weighing alone used to get.
-// Status for every one of them is derived purely from what's actually been
-// submitted (readings-GET), never from a session_test_selection row (only
-// Weighing has one, created unconditionally at session creation) — so none
-// of this needs the per-session test selector (docs/plan.md Phase 3) to
-// work.
-const IMPLEMENTED_ROWS = TEST_ROWS.filter((row) => row.route);
-
 function StatusBadge({ status }) {
   const variant = status === "draft" ? "secondary" : status === "issued" || status === "approved" ? "success" : "outline";
   return <Badge variant={variant} className="capitalize">{status}</Badge>;
@@ -52,6 +43,8 @@ function TestStatusBadge({ status, verdict }) {
   switch (status) {
     case "loading":
       return <Skeleton className="h-5 w-24" />;
+    case "na":
+      return <Badge variant="outline">N/A</Badge>;
     case "not_started":
       return <Badge variant="outline">Not started</Badge>;
     case "in_progress":
@@ -74,11 +67,13 @@ function TestStatusBadge({ status, verdict }) {
  * session exists (its session_test_selection row is created unconditionally
  * at session creation, docs/architecture.md), so it's listed here directly
  * with live status rather than waiting for a redundant pick; the same is
- * now true for Zero/tare, Repeatability, and Eccentricity, purely because
- * they have real data to derive status from, not because they have
- * selection rows. The dialog is the discovery surface for the full 7-item
- * checklist, where these four are selectable and the remaining three show
- * their N/A reason or "Coming soon". The verification_type was already
+ * now true for every other test, purely because each has real data to
+ * derive status from, not because any of them (Weighing aside) has a
+ * session_test_selection row. All seven checklist rows are shown here now
+ * (not just the "implemented" subset) — a row whose naReason(instrument)
+ * is truthy shows "N/A" instead of a Start/Open button; every other row
+ * shows live status. The dialog remains the discovery surface with the
+ * same N/A/"Coming soon" distinctions. The verification_type was already
  * chosen once, at session creation (StartVerificationDialog), never
  * re-asked here.
  *
@@ -100,6 +95,11 @@ export function SessionPage() {
   const [zeroTareReadings, setZeroTareReadings] = useState(undefined);
   const [repeatabilitySeries, setRepeatabilitySeries] = useState(undefined);
   const [eccentricityReadings, setEccentricityReadings] = useState(undefined);
+  const [discriminationChecks, setDiscriminationChecks] = useState(undefined);
+  const [discriminationReadings, setDiscriminationReadings] = useState(undefined);
+  const [sensitivityChecks, setSensitivityChecks] = useState(undefined);
+  const [sensitivityReadings, setSensitivityReadings] = useState(undefined);
+  const [tiltingState, setTiltingState] = useState(undefined);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -119,11 +119,29 @@ export function SessionPage() {
           apiFetch(`/sessions/${id}/zero-tare/readings`),
           apiFetch(`/sessions/${id}/repeatability/readings`),
           apiFetch(`/sessions/${id}/eccentricity/readings`),
+          apiFetch(`/sessions/${id}/discrimination/checks`),
+          apiFetch(`/sessions/${id}/discrimination/readings`),
+          apiFetch(`/sessions/${id}/sensitivity/checks`),
+          apiFetch(`/sessions/${id}/sensitivity/readings`),
+          apiFetch(`/sessions/${id}/tilting/readings`),
         ]);
       })
       .then((results) => {
         if (cancelled || !results) return;
-        const [instrumentData, sequenceData, weighingReadingsData, checksData, zeroTareReadingsData, seriesData, eccentricityReadingsData] = results;
+        const [
+          instrumentData,
+          sequenceData,
+          weighingReadingsData,
+          checksData,
+          zeroTareReadingsData,
+          seriesData,
+          eccentricityReadingsData,
+          discriminationChecksData,
+          discriminationReadingsData,
+          sensitivityChecksData,
+          sensitivityReadingsData,
+          tiltingStateData,
+        ] = results;
         setInstrument(instrumentData);
         setWeighingSequence(sequenceData);
         setWeighingReadings(weighingReadingsData);
@@ -131,6 +149,11 @@ export function SessionPage() {
         setZeroTareReadings(zeroTareReadingsData);
         setRepeatabilitySeries(seriesData);
         setEccentricityReadings(eccentricityReadingsData);
+        setDiscriminationChecks(discriminationChecksData);
+        setDiscriminationReadings(discriminationReadingsData);
+        setSensitivityChecks(sensitivityChecksData);
+        setSensitivityReadings(sensitivityReadingsData);
+        setTiltingState(tiltingStateData);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -166,11 +189,30 @@ export function SessionPage() {
     return computeProgress(total, eccentricityReadings?.length ?? 0, eccentricityReadings?.every((r) => r.passed));
   }, [eccentricityReadings]);
 
+  const discriminationProgress = useMemo(() => {
+    const total = discriminationChecks ? discriminationChecks.length : undefined;
+    return computeProgress(total, discriminationReadings?.length ?? 0, discriminationReadings?.every((r) => r.passed));
+  }, [discriminationChecks, discriminationReadings]);
+
+  const sensitivityProgress = useMemo(() => {
+    const total = sensitivityChecks ? sensitivityChecks.length : undefined;
+    return computeProgress(total, sensitivityReadings?.length ?? 0, sensitivityReadings?.every((r) => r.passed));
+  }, [sensitivityChecks, sensitivityReadings]);
+
+  const tiltingProgress = useMemo(() => {
+    if (!tiltingState) return { status: "loading" };
+    const total = 15; // 3 phases x 5 positions
+    return computeProgress(total, tiltingState.readings.length, tiltingState.passed === true);
+  }, [tiltingState]);
+
   const PROGRESS_BY_KEY = {
     weighing: weighingProgress,
     zero_tare: zeroTareProgress,
     repeatability: repeatabilityProgress,
     eccentricity: eccentricityProgress,
+    discrimination: discriminationProgress,
+    sensitivity: sensitivityProgress,
+    tilting: tiltingProgress,
   };
 
   if (session === undefined) {
@@ -268,25 +310,31 @@ export function SessionPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {/* Once a real per-session test selector exists (docs/plan.md
-                  Phase 3), this row list will reflect whatever's actually
-                  been added via session_test_selection rows for the
-                  remaining three test_types too, not just these four. */}
-              {IMPLEMENTED_ROWS.map((row) => {
-                const progress = PROGRESS_BY_KEY[row.key];
+              {/* All seven checklist rows, always. A row's naReason
+                  (instrument-driven, never session/progress state — the
+                  no-forced-sequence guardrail) decides N/A vs. live status;
+                  once a real per-session test selector exists
+                  (docs/plan.md Phase 3), this can additionally reflect
+                  session_test_selection rows, but doesn't need to for any
+                  of this to work today. */}
+              {TEST_ROWS.map((row) => {
+                const naReason = instrument && row.naReason ? row.naReason(instrument) : null;
+                const progress = naReason ? { status: "na" } : PROGRESS_BY_KEY[row.key];
                 return (
                   <TableRow key={row.key}>
                     <TableCell>
                       <div className="font-medium">{row.label}</div>
-                      <div className="text-xs text-muted-foreground">{row.clause}</div>
+                      <div className="text-xs text-muted-foreground">{naReason || row.clause}</div>
                     </TableCell>
                     <TableCell>
                       <TestStatusBadge status={progress.status} verdict={progress.verdict} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button asChild size="sm" variant={progress.status === "not_started" ? "default" : "outline"}>
-                        <Link to={row.route(id)}>{progress.status === "not_started" ? "Start" : "Open"}</Link>
-                      </Button>
+                      {naReason ? null : (
+                        <Button asChild size="sm" variant={progress.status === "not_started" ? "default" : "outline"}>
+                          <Link to={row.route(id)}>{progress.status === "not_started" ? "Start" : "Open"}</Link>
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
