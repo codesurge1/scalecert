@@ -175,3 +175,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — fix: package engine module into the deployed backend function
+
+**Done:** Confirmed production bug: the deployed `backend` Vercel Service crashed at import time (`ModuleNotFoundError: No module named 'engine'`) on every authed route, because Vercel builds that service from `backend/` as its root and the sibling repo-root `engine/` package isn't included by default. `vercel.com` docs were still egress-blocked (tried again first); reasoned from Vercel's Python packaging model and real GitHub examples (`vercel/vercel` PR #5030, a `vercel/vercel-plugin` migration-docs PR) instead — neither source could confirm whether `includeFiles` can reach outside a service's own `root` under the newer `services` shape, so rather than gamble on an unconfirmed, potentially-silent-failure mechanism, chose a build-time copy: `services.backend.installCommand = "cp -r ../engine ./engine && pip install -r requirements.txt"` (fails loudly if the sibling-directory assumption is wrong, unlike a silently-empty glob). `backend/engine/` gitignored — generated, never a second source of truth. Locally reproduced the exact reported error in an isolated temp copy of `backend/` with no `engine/` present, then confirmed the same copy step resolves it — going further, booted the real `app.main:app` FastAPI app (fresh venv, real `requirements.txt`) from within that simulated function root and listed its actual routes. What could NOT be verified locally: whether Vercel's real build actually has the sibling `engine/` present when `installCommand` runs — that's the one thing only the next real deploy proves. Re-ran the full suite from repo root: **179 passed**, unchanged (pure deploy-config fix, no code touched). Recorded ADR-0006. Updated `docs/architecture.md` (resolved the flagged known-follow-up) and `docs/runbook.md`'s Deploy section.
+
+**Next:** Verify on the actual next deploy that authed routes no longer 500 (`/api/instruments`, `/api/sessions/...` with a valid token). If the `installCommand` assumption turns out wrong (build fails on the `cp` step), fall back to making `engine/` a pip-installable local package (ADR-0006 option 2) rather than gambling further on `includeFiles`.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

@@ -35,4 +35,6 @@ One project, one domain, two [Vercel Services](https://vercel.com/docs/services)
 
 The project is pinned to region `bom1` (Mumbai) via a top-level `"regions": ["bom1"]` key in `vercel.json` (not nested inside `services.backend` — Vercel's schema rejects it there; a prior version had it there and it broke every deploy). This co-locates the `backend` function with the Supabase project's region (`ap-south-1`), avoiding a trans-Pacific round trip on every request. Not verified against Vercel's live schema (docs unreachable from this environment) — if deploys still fail schema validation on this key, remove `regions` from `vercel.json` entirely and set the region in the Vercel dashboard instead (Project Settings → Functions).
 
+`services.backend.installCommand` (`cp -r ../engine ./engine && pip install -r requirements.txt`) copies the repo-root `engine/` package into the backend service's own bundle at build time — required because the `backend` service's `root` is `backend/`, which does not otherwise include its sibling `engine/` (ADR-0006). Nothing to configure by hand; this runs automatically as part of every deploy. `backend/engine/` is a generated, gitignored copy — never edit it directly.
+
 ## Common issues
