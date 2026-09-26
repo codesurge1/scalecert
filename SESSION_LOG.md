@@ -125,3 +125,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — fix: move regions to valid vercel.json location (schema validation)
+
+**Done:** `vercel.json` was failing Vercel's schema validation on every deploy: `services.backend` should NOT have additional property `regions` (placed there in an earlier task). Moved `regions: ["bom1"]` out of `services.backend` to a top-level key instead. `vercel.com`/`openapi.vercel.sh` were still unreachable from this environment (egress-blocked), so this could not be verified against the live schema directly; the placement is reasoned from the schema error itself (only rejected *inside* the service object) plus corroborating evidence that Vercel's documented list of keys forced into a service when `services` is present (`functions`, `buildCommand`, `installCommand`, `devCommand`, `ignoreCommand`, `outputDirectory`, `framework`) does not include `regions`. Validated the resulting JSON is well-formed. Updated the region note in `README.md` and `docs/runbook.md` to reflect the corrected placement and spell out the dashboard fallback (Project Settings → Functions) if top-level `regions` is also rejected.
+
+**Next:** Needs deploy-verification — push this branch's config to a preview and confirm schema validation now passes. If it still fails on `regions`, apply the fallback noted above (remove `regions` from `vercel.json`, set the region in the dashboard instead) rather than guessing at a third placement.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

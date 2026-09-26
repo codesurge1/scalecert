@@ -48,7 +48,7 @@ Runs on `http://localhost:5173`. Needs `frontend/.env` (see `frontend/.env.examp
 
 One Vercel project, one domain, two [Vercel Services](https://vercel.com/docs/services): `frontend` (the Vite build, served at `/`) and `backend` (the FastAPI app, reachable under `/api`). The routing is defined in `vercel.json` at the repo root — a rewrite sends `/api/:path*` to the backend service, and everything else (SPA fallback) to the frontend service, which serves `index.html`. There is no separate frontend deploy and backend deploy to keep in sync; it's one project, one domain, built and routed together.
 
-The `backend` service is pinned to region `bom1` (Mumbai) in `vercel.json`, to co-locate it with the Supabase project (`ap-south-1`) and avoid a trans-Pacific round trip on every request from India-based users.
+The project is pinned to region `bom1` (Mumbai) via a top-level `"regions": ["bom1"]` key in `vercel.json`, to co-locate the `backend` function with the Supabase project (`ap-south-1`) and avoid a trans-Pacific round trip on every request from India-based users. (An earlier version placed `regions` inside `services.backend` — Vercel's schema rejects it there, which broke every deploy; the top-level key is the fix. This placement is the best-supported reading of the schema error, not verified against Vercel's live schema — if it's ever rejected too, remove `regions` from `vercel.json` entirely and set the function's region in the Vercel dashboard instead, under Project Settings → Functions.)
 
 ### Environment variables (set in the Vercel dashboard, per environment)
 

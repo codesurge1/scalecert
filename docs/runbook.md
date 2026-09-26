@@ -33,6 +33,6 @@ To reset: drop and recreate the project (or its schema), then re-run `db/schema.
 
 One project, one domain, two [Vercel Services](https://vercel.com/docs/services) defined in `/vercel.json` (repo root): `frontend` (Vite build, served at `/`) and `backend` (FastAPI, `backend/main.py` entrypoint shim, reachable under `/api`). Env vars are set in the Vercel dashboard, not committed anywhere — full list, and the post-deploy RLS acceptance check, are in [README.md](../README.md#deploying-to-vercel).
 
-The `backend` service is pinned to region `bom1` (Mumbai) to co-locate it with the Supabase project's region (`ap-south-1`), avoiding a trans-Pacific round trip on every request.
+The project is pinned to region `bom1` (Mumbai) via a top-level `"regions": ["bom1"]` key in `vercel.json` (not nested inside `services.backend` — Vercel's schema rejects it there; a prior version had it there and it broke every deploy). This co-locates the `backend` function with the Supabase project's region (`ap-south-1`), avoiding a trans-Pacific round trip on every request. Not verified against Vercel's live schema (docs unreachable from this environment) — if deploys still fail schema validation on this key, remove `regions` from `vercel.json` entirely and set the region in the Vercel dashboard instead (Project Settings → Functions).
 
 ## Common issues
