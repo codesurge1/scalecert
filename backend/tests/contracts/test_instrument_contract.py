@@ -118,3 +118,93 @@ def test_instrument_params_from_row_handles_float_and_none_min():
     assert params.e_value == D("1")
     assert params.max_capacity == D("5000")
     assert params.min_capacity is None
+
+
+# ---------------------------------------------------------------------------
+# R 76-2 page-6 "General information concerning the type" fields — all
+# optional, so the core (identity + e/Max/Min) can be submitted alone.
+# ---------------------------------------------------------------------------
+def test_instrument_in_page_6_fields_are_all_optional():
+    instrument = InstrumentIn(**_VALID_IN)
+    assert instrument.applicant is None
+    assert instrument.printer_status is None
+    assert instrument.load_cell_capacity is None
+
+
+def test_instrument_in_parses_page_6_fields_when_given():
+    instrument = InstrumentIn(
+        **_VALID_IN,
+        applicant="RRSL Mumbai",
+        instrument_category="Complete instrument",
+        u_nom="230",
+        u_min="207",
+        u_max="253",
+        mains_frequency="50",
+        battery_u_nom="9",
+        printer_status="built_in",
+        zero_device_type="automatic_zero_setting",
+        tare_device_type="subtractive_tare",
+        initial_zero_setting_range_pct="20",
+        temperature_range_min="-10",
+        temperature_range_max="40",
+        load_cell_manufacturer="HBM",
+        load_cell_type="Z6",
+        load_cell_capacity="3000",
+        load_cell_number="LC-001",
+        load_cell_class_symbol="C3",
+        software_version="1.2.3",
+        identification_no="ID-001",
+        interfaces="RS-232 (1x)",
+    )
+    assert instrument.u_nom == D("230")
+    assert instrument.printer_status == "built_in"
+    assert instrument.zero_device_type == "automatic_zero_setting"
+    assert instrument.tare_device_type == "subtractive_tare"
+    assert instrument.temperature_range_min == D("-10")
+    assert instrument.load_cell_capacity == D("3000")
+
+
+def test_instrument_in_rejects_bad_printer_status():
+    with pytest.raises(ValidationError):
+        InstrumentIn(**_VALID_IN, printer_status="on_fire")
+
+
+def test_instrument_in_rejects_bad_zero_device_type():
+    with pytest.raises(ValidationError):
+        InstrumentIn(**_VALID_IN, zero_device_type="not_a_real_option")
+
+
+def test_instrument_in_rejects_bad_tare_device_type():
+    with pytest.raises(ValidationError):
+        InstrumentIn(**_VALID_IN, tare_device_type="not_a_real_option")
+
+
+def test_instrument_in_rejects_float_page_6_numeric_field():
+    with pytest.raises(ValidationError):
+        InstrumentIn(**_VALID_IN, u_nom=230.0)
+
+
+def test_instrument_insert_payload_carries_page_6_fields():
+    instrument = InstrumentIn(**_VALID_IN, applicant="RRSL Mumbai", u_nom="230", printer_status="built_in")
+    payload = instrument_insert_payload("user-123", instrument, AccuracyClass.III)
+    assert payload["applicant"] == "RRSL Mumbai"
+    assert payload["u_nom"] == "230"  # string, not a JSON number
+    assert payload["printer_status"] == "built_in"
+
+
+def test_instrument_out_from_row_handles_page_6_fields_missing_from_a_pre_migration_row():
+    # A row from before db/migrations/002_registration_fields.sql was
+    # applied (or simply never filled in) won't have these keys at all —
+    # InstrumentOut must still parse, with every page-6 field defaulting to
+    # None, not raise on "extra field forbidden" or a missing-field error.
+    out = instrument_out_from_row(_RAW_ROW_WITH_FLOATS)
+    assert out.applicant is None
+    assert out.u_nom is None
+    assert out.printer_status is None
+
+
+def test_instrument_out_from_row_converts_page_6_numeric_floats_from_postgrest():
+    row = dict(_RAW_ROW_WITH_FLOATS, u_nom=230.0, load_cell_capacity=3000.0)
+    out = instrument_out_from_row(row)
+    assert out.u_nom == D("230")
+    assert out.load_cell_capacity == D("3000")

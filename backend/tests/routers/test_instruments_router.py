@@ -1,5 +1,7 @@
 """Router-level tests for /api/instruments — DB layer entirely mocked."""
 
+from decimal import Decimal as D
+
 import app.repositories.instruments as instruments_repo
 import app.repositories.sessions as sessions_repo
 from app.deps import AuthContext, get_auth_context
@@ -71,6 +73,48 @@ def test_create_instrument_sets_registered_by_and_returns_row(monkeypatch):
 def test_create_instrument_rejects_invalid_body():
     resp = client.post("/api/instruments", json={"accuracy_class": "V"})
     assert resp.status_code == 422
+
+
+def test_create_instrument_persists_page_6_fields(monkeypatch):
+    captured = {}
+
+    def fake_insert(client, registered_by, payload, accuracy_class):
+        captured["payload"] = payload
+        return {
+            "id": "instr-1",
+            "registered_by": registered_by,
+            "application_no": None,
+            "type_designation": None,
+            "manufacturer": None,
+            "model": None,
+            "serial_number": None,
+            "accuracy_class": accuracy_class.value,
+            "e_value": 1.0,
+            "d_value": None,
+            "max_capacity": 6000.0,
+            "min_capacity": 20.0,
+            "indication_type": "digital",
+            "is_mobile": False,
+            "is_multi_interval": False,
+            "applicant": "RRSL Mumbai",
+            "u_nom": 230.0,
+            "printer_status": "built_in",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(instruments_repo, "insert_instrument", fake_insert)
+
+    resp = client.post(
+        "/api/instruments",
+        json=dict(_VALID_BODY, applicant="RRSL Mumbai", u_nom="230", printer_status="built_in"),
+    )
+    assert resp.status_code == 201
+    assert captured["payload"].applicant == "RRSL Mumbai"
+    assert captured["payload"].u_nom == D("230")
+    body = resp.json()
+    assert body["applicant"] == "RRSL Mumbai"
+    assert body["u_nom"] == "230.0"  # string, not a JSON number
+    assert body["printer_status"] == "built_in"
 
 
 def test_create_instrument_rejects_e_max_min_that_fit_no_class(monkeypatch):
