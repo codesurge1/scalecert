@@ -46,3 +46,9 @@ These rules are part of the Definition of Done. A task is not complete until the
 - [ ] No secret, key, or .env file is staged.
 - [ ] No guardrail above is violated.
 - [ ] SESSION_LOG.md updated if this ends a session.
+
+## Branch-per-task workflow
+- Every task is done on a branch off `main`. Never commit directly to `main`.
+- Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
+- Do the whole task on the branch, commit, push, then STOP. Never merge into `main` yourself — the human reviews the branch and explicitly instructs the merge.
+- `main` stays deployable at all times. Tag a known-good build at the end of each working day.

@@ -13,3 +13,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 **Next:** What the following session should pick up.
 
 **Open questions:** Anything unresolved that needs a decision or more information.
+
+---
+
+### [2026-09-26] — seed build plan, branch workflow, ADRs 0002/0003
+
+**Done:** Seeded `docs/plan.md` with the full build plan (five principles, phases 0–4, lanes, open questions). Added the branch-per-task workflow rule to `CLAUDE.md`. Recorded ADR-0002 (new Supabase project) and ADR-0003 (hosting on Vercel with the Supavisor pooler).
+
+**Next:** Schema migration.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
