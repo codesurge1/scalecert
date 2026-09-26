@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ScaleCert API test harness (throwaway)</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  body { font-family: monospace; margin: 1.5rem; max-width: 900px; }
+  h1 { font-size: 1.1rem; }
+  h2 { font-size: 1rem; margin-top: 2rem; border-top: 2px solid #000; padding-top: 0.5rem; }
+  fieldset { margin-bottom: 1rem; }
+  label { display: block; margin: 0.3rem 0 0.1rem; }
+  input { width: 100%; max-width: 500px; box-sizing: border-box; }
+  button { display: block; margin: 0.5rem 0; padding: 0.4rem 0.8rem; cursor: pointer; }
+  pre { background: #eee; padding: 0.5rem; white-space: pre-wrap; word-break: break-word; border: 1px solid #999; max-height: 300px; overflow: auto; }
+  .status { font-weight: bold; }
+  .hint { color: #333; font-style: italic; }
+  .warn { color: #900; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>ScaleCert API test harness — THROWAWAY, manual preview verification only</h1>
+<p class="warn">This page is not part of the real app. It exists to click through /api endpoints on this same deploy.</p>
+
+<h2>0. Config + login (primary user)</h2>
+<fieldset>
+  <label>Supabase URL</label>
+  <input id="cfg-url" placeholder="https://xxxx.supabase.co" />
+  <label>Supabase anon key (public, safe to paste)</label>
+  <input id="cfg-anon" placeholder="eyJ..." />
+  <label>Email</label>
+  <input id="login-email" placeholder="technician@scalecert.demo" />
+  <label>Password</label>
+  <input id="login-password" type="password" />
+  <button onclick="login()">Log in</button>
+  <div id="login-status"></div>
+</fieldset>
+
+<h2>Steps 1–9 — as the primary logged-in user</h2>
+
+<fieldset>
+  <button onclick="step1()">Step 1 — Register instrument (POST /api/instruments) — expect 201, stores instrument id</button>
+  <button onclick="step2()">Step 2 — List instruments (GET /api/instruments) — expect 200</button>
+  <button onclick="step3()">Step 3 — Get instrument by stored id (GET /api/instruments/{id}) — expect 200</button>
+  <button onclick="step4()">Step 4 — Create session (POST /api/sessions) — expect 201, stores session id</button>
+  <button onclick="step5()">Step 5 — Get session by stored id (GET /api/sessions/{id}) — expect 200</button>
+  <button onclick="step6()">Step 6 — Get weighing sequence (GET /api/sessions/{id}/weighing/sequence) — expect 200, list of entries</button>
+
+  <label>Step 7 — sequence_no (edit to try different loads)</label>
+  <input id="step7-seq" value="0" />
+  <label>Step 7 — I (edit: near the sequence entry's L = PASS, far = FAIL)</label>
+  <input id="step7-i" value="10.4" />
+  <button onclick="step7()">Step 7 — Submit reading (POST /api/sessions/{id}/weighing/readings) — expect 201, full derivation</button>
+
+  <button onclick="step8()">Step 8 — Submit bad sequence_no=99999 — expect 422</button>
+
+  <p class="hint">Step 9 (manual, no button) — to test the 409: in the Supabase dashboard, edit this session's <code>test_sessions.status</code> to <code>'submitted'</code>, then click Step 7 again — expect 409. Set it back to <code>'draft'</code> afterwards if you want to keep testing.</p>
+</fieldset>
+
+<h2>Step 10 — RLS check: log in as a DIFFERENT user</h2>
+<p class="hint">Correct result is 404 (not 403) — instruments/sessions not visible under RLS return zero rows, same as not existing at all (CLAUDE.md: RLS fails silently). This proves RLS is actually scoping the read, not just the app pretending to.</p>
+<fieldset>
+  <label>Other user email</label>
+  <input id="login2-email" placeholder="approver@scalecert.demo" />
+  <label>Other user password</label>
+  <input id="login2-password" type="password" />
+  <button onclick="login2()">Log in as different user</button>
+  <div id="login2-status"></div>
+  <button onclick="step10()">Step 10 — GET session as other user (GET /api/sessions/{storedSessionId}) — expect 404</button>
+</fieldset>
+
+<h2>Output</h2>
+<div>Stored instrument id: <span id="stored-instrument">(none yet)</span></div>
+<div>Stored session id: <span id="stored-session">(none yet)</span></div>
+<div class="status" id="last-status"></div>
+<pre id="output">(output appears here)</pre>
+
+<script>
+  let supabase = null;
+  let accessToken = null;
+  let accessToken2 = null;
+  let storedInstrumentId = null;
+  let storedSessionId = null;
+
+  function show(status, body) {
+    document.getElementById('last-status').textContent = 'Status: ' + status;
+    document.getElementById('output').textContent = JSON.stringify(body, null, 2);
+  }
+
+  function getClient() {
+    const url = document.getElementById('cfg-url').value.trim();
+    const anon = document.getElementById('cfg-anon').value.trim();
+    if (!url || !anon) {
+      alert('Fill in Supabase URL and anon key first.');
+      return null;
+    }
+    if (!supabase) {
+      supabase = window.supabase.createClient(url, anon);
+    }
+    return supabase;
+  }
+
+  async function login() {
+    const client = getClient();
+    if (!client) return;
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    const { data, error } = await client.auth.signInWithPassword({ email, password });
+    const statusEl = document.getElementById('login-status');
+    if (error) {
+      statusEl.textContent = 'Login error: ' + error.message;
+      return;
+    }
+    accessToken = data.session.access_token;
+    statusEl.textContent = 'Logged in as ' + data.user.email;
+  }
+
+  async function login2() {
+    const url = document.getElementById('cfg-url').value.trim();
+    const anon = document.getElementById('cfg-anon').value.trim();
+    if (!url || !anon) {
+      alert('Fill in Supabase URL and anon key first (top of page).');
+      return;
+    }
+    // Separate client instance so the two sessions don't clobber each other.
+    const client2 = window.supabase.createClient(url, anon);
+    const email = document.getElementById('login2-email').value.trim();
+    const password = document.getElementById('login2-password').value;
+    const { data, error } = await client2.auth.signInWithPassword({ email, password });
+    const statusEl = document.getElementById('login2-status');
+    if (error) {
+      statusEl.textContent = 'Login error: ' + error.message;
+      return;
+    }
+    accessToken2 = data.session.access_token;
+    statusEl.textContent = 'Logged in as ' + data.user.email + ' (other user)';
+  }
+
+  async function call(path, options, token) {
+    const useToken = token || accessToken;
+    if (!useToken) {
+      alert('Log in first.');
+      return;
+    }
+    const resp = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + useToken,
+        ...(options && options.headers ? options.headers : {}),
+      },
+    });
+    let body;
+    try {
+      body = await resp.json();
+    } catch (e) {
+      body = { note: 'no JSON body', text: await resp.text() };
+    }
+    show(resp.status, body);
+    return { status: resp.status, body };
+  }
+
+  async function step1() {
+    const payload = {
+      accuracy_class: 'III',
+      e_value: '1',
+      max_capacity: '5000',
+      min_capacity: '10',
+      indication_type: 'digital',
+      is_mobile: false,
+      is_multi_interval: false,
+      application_no: 'TEST-APITEST-1',
+      type_designation: 'apitest-harness',
+      manufacturer: 'ApiTest Co',
+      model: 'ApiTest Model',
+      serial_number: 'SN-APITEST-1',
+    };
+    const result = await call('/api/instruments', { method: 'POST', body: JSON.stringify(payload) });
+    if (result && result.status === 201 && result.body && result.body.id) {
+      storedInstrumentId = result.body.id;
+      document.getElementById('stored-instrument').textContent = storedInstrumentId;
+    }
+  }
+
+  async function step2() {
+    await call('/api/instruments', { method: 'GET' });
+  }
+
+  async function step3() {
+    if (!storedInstrumentId) { alert('Run Step 1 first.'); return; }
+    await call('/api/instruments/' + storedInstrumentId, { method: 'GET' });
+  }
+
+  async function step4() {
+    if (!storedInstrumentId) { alert('Run Step 1 first.'); return; }
+    const payload = { instrument_id: storedInstrumentId, verification_type: 'initial' };
+    const result = await call('/api/sessions', { method: 'POST', body: JSON.stringify(payload) });
+    if (result && result.status === 201 && result.body && result.body.id) {
+      storedSessionId = result.body.id;
+      document.getElementById('stored-session').textContent = storedSessionId;
+    }
+  }
+
+  async function step5() {
+    if (!storedSessionId) { alert('Run Step 4 first.'); return; }
+    await call('/api/sessions/' + storedSessionId, { method: 'GET' });
+  }
+
+  async function step6() {
+    if (!storedSessionId) { alert('Run Step 4 first.'); return; }
+    await call('/api/sessions/' + storedSessionId + '/weighing/sequence', { method: 'GET' });
+  }
+
+  async function step7() {
+    if (!storedSessionId) { alert('Run Step 4 first.'); return; }
+    const seq = parseInt(document.getElementById('step7-seq').value, 10);
+    const iValue = document.getElementById('step7-i').value;
+    const payload = { sequence_no: seq, direction: 'up', I: iValue, delta_l: '0.5', E0: '0' };
+    await call('/api/sessions/' + storedSessionId + '/weighing/readings', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async function step8() {
+    if (!storedSessionId) { alert('Run Step 4 first.'); return; }
+    const payload = { sequence_no: 99999, direction: 'up', I: '10.4', delta_l: '0.5', E0: '0' };
+    await call('/api/sessions/' + storedSessionId + '/weighing/readings', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async function step10() {
+    if (!storedSessionId) { alert('Run Step 4 first.'); return; }
+    if (!accessToken2) { alert('Log in as a different user first (above).'); return; }
+    await call('/api/sessions/' + storedSessionId, { method: 'GET' }, accessToken2);
+  }
+</script>
+</body>
+</html>
