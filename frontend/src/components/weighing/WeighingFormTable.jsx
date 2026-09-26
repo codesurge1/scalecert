@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
+import { FormLine, FormCheckbox } from "@/components/oiml/FormPrimitives";
 
 // Direction mapping — explicit and intentional, do not "simplify" this away.
 // The OIML R 76-2 form prints two sub-columns per quantity, headed with the
@@ -41,47 +42,6 @@ function todayIso() {
 
 function fmt(value) {
   return value === undefined || value === null || value === "" ? "" : value;
-}
-
-/** A label + dotted fill-in line, matching the form's "Label: …………" rows. */
-function FormLine({ label, value, editable, disabled, onChange }) {
-  return (
-    <div className="flex items-baseline gap-2">
-      <span className="shrink-0">{label}</span>
-      {editable ? (
-        <input
-          className="min-w-0 flex-1 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-sm focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
-          disabled={disabled}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <span className="min-w-0 flex-1 truncate border-b border-dotted border-neutral-500 px-1 text-sm">
-          {value || " "}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** A square ☐-style checkbox, matching the form's tick-box controls. Used
- * both interactively (zero-device / initial-zero radios) and read-only (the
- * Passed/Failed boxes, which reflect the computed verdict rather than a
- * manual click). */
-function FormCheckbox({ checked, onClick, label, readOnly }) {
-  return (
-    <span
-      role={readOnly ? undefined : "checkbox"}
-      aria-checked={checked}
-      onClick={readOnly ? undefined : onClick}
-      className={`flex items-center gap-2 text-sm ${readOnly ? "" : "cursor-pointer"}`}
-    >
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center border border-neutral-900">
-        {checked ? <span className="h-2.5 w-2.5 bg-neutral-900" /> : null}
-      </span>
-      {label}
-    </span>
-  );
 }
 
 /**

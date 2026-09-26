@@ -45,6 +45,37 @@ create table instruments (
   indication_type indication_type not null,
   is_mobile boolean not null default false,
   is_multi_interval boolean not null default false,
+  -- R 76-2 page-6 "General information concerning the type" report-form
+  -- fields (docs/decisions/0007), added alongside the identity/e/Max/Min/
+  -- indication_type/accuracy_class fields above — all nullable, so a
+  -- technician can fill the core (identity + e/Max/Min) and leave the rest.
+  applicant text,
+  instrument_category text,
+  -- Power supply.
+  u_nom numeric,              -- rated mains voltage, V
+  u_min numeric,              -- minimum mains voltage, V
+  u_max numeric,              -- maximum mains voltage, V
+  mains_frequency numeric,    -- Hz
+  battery_u_nom numeric,      -- rated battery voltage, V
+  printer_status text,        -- 'built_in' | 'connected' | 'not_present' | 'no_connection'
+                               -- (validated at the Pydantic layer, not here — same pattern as
+                               -- session_test_selection.zero_device_status).
+  zero_device_type text,      -- 'non_automatic' | 'semi_automatic' | 'automatic_zero_setting'
+                               -- | 'initial_zero_setting' | 'zero_tracking'
+  tare_device_type text,      -- 'tare_balancing' | 'tare_weighing' | 'preset_tare_device'
+                               -- | 'subtractive_tare' | 'additive_tare' | 'combined_zero_tare_device'
+  initial_zero_setting_range_pct numeric,  -- % of Max
+  temperature_range_min numeric,           -- deg C (form's "T = -")
+  temperature_range_max numeric,           -- deg C (form's "T = +")
+  -- Load cell.
+  load_cell_manufacturer text,
+  load_cell_type text,
+  load_cell_capacity numeric,
+  load_cell_number text,
+  load_cell_class_symbol text,
+  software_version text,
+  identification_no text,
+  interfaces text,            -- number and nature, free text
   created_at timestamptz not null default now()
 );
 

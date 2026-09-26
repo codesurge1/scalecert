@@ -3,13 +3,28 @@ test_type contract — see app/contracts/__init__.py)."""
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
 from app.contracts.common import IndicationType, StrictDecimal
 from app.db_decimal import decimal_from_db_value
 from engine.types import AccuracyClass
+
+# The three R 76-2 page-6 fields with a closed set of options (the form's
+# own checkbox groups — see docs/architecture.md). Stored as plain `text` in
+# the DB (db/migrations/002_registration_fields.sql) — validated here at the
+# Pydantic layer, not by a DB enum, same "the rest text" choice CLAUDE.md
+# made for this task rather than growing the DB enum surface for every
+# report-form checkbox group.
+PrinterStatus = Literal["built_in", "connected", "not_present", "no_connection"]
+ZeroDeviceType = Literal[
+    "non_automatic", "semi_automatic", "automatic_zero_setting", "initial_zero_setting", "zero_tracking"
+]
+TareDeviceType = Literal[
+    "tare_balancing", "tare_weighing", "preset_tare_device", "subtractive_tare", "additive_tare",
+    "combined_zero_tare_device",
+]
 
 
 class InstrumentIn(BaseModel):
@@ -53,6 +68,31 @@ class InstrumentIn(BaseModel):
     is_mobile: bool = False
     is_multi_interval: bool = False
 
+    # R 76-2 page-6 "General information concerning the type" fields
+    # (docs/decisions/0007) — all optional, so a technician can fill the
+    # core (identity + e/Max/Min) and leave the rest, same as before.
+    applicant: Optional[str] = None
+    instrument_category: Optional[str] = None
+    u_nom: Optional[StrictDecimal] = None
+    u_min: Optional[StrictDecimal] = None
+    u_max: Optional[StrictDecimal] = None
+    mains_frequency: Optional[StrictDecimal] = None
+    battery_u_nom: Optional[StrictDecimal] = None
+    printer_status: Optional[PrinterStatus] = None
+    zero_device_type: Optional[ZeroDeviceType] = None
+    tare_device_type: Optional[TareDeviceType] = None
+    initial_zero_setting_range_pct: Optional[StrictDecimal] = None
+    temperature_range_min: Optional[StrictDecimal] = None
+    temperature_range_max: Optional[StrictDecimal] = None
+    load_cell_manufacturer: Optional[str] = None
+    load_cell_type: Optional[str] = None
+    load_cell_capacity: Optional[StrictDecimal] = None
+    load_cell_number: Optional[str] = None
+    load_cell_class_symbol: Optional[str] = None
+    software_version: Optional[str] = None
+    identification_no: Optional[str] = None
+    interfaces: Optional[str] = None
+
 
 class InstrumentOut(BaseModel):
     """An `instruments` row as returned to the client — numbers as strings."""
@@ -75,6 +115,29 @@ class InstrumentOut(BaseModel):
     indication_type: IndicationType
     is_mobile: bool
     is_multi_interval: bool
+
+    applicant: Optional[str] = None
+    instrument_category: Optional[str] = None
+    u_nom: Optional[StrictDecimal] = None
+    u_min: Optional[StrictDecimal] = None
+    u_max: Optional[StrictDecimal] = None
+    mains_frequency: Optional[StrictDecimal] = None
+    battery_u_nom: Optional[StrictDecimal] = None
+    printer_status: Optional[PrinterStatus] = None
+    zero_device_type: Optional[ZeroDeviceType] = None
+    tare_device_type: Optional[TareDeviceType] = None
+    initial_zero_setting_range_pct: Optional[StrictDecimal] = None
+    temperature_range_min: Optional[StrictDecimal] = None
+    temperature_range_max: Optional[StrictDecimal] = None
+    load_cell_manufacturer: Optional[str] = None
+    load_cell_type: Optional[str] = None
+    load_cell_capacity: Optional[StrictDecimal] = None
+    load_cell_number: Optional[str] = None
+    load_cell_class_symbol: Optional[str] = None
+    software_version: Optional[str] = None
+    identification_no: Optional[str] = None
+    interfaces: Optional[str] = None
+
     created_at: str
 
 
@@ -91,7 +154,12 @@ class InstrumentParams:
     min_capacity: Optional[Decimal]
 
 
-_NUMERIC_FIELDS = ("e_value", "d_value", "max_capacity", "min_capacity")
+_NUMERIC_FIELDS = (
+    "e_value", "d_value", "max_capacity", "min_capacity",
+    "u_nom", "u_min", "u_max", "mains_frequency", "battery_u_nom",
+    "initial_zero_setting_range_pct", "temperature_range_min", "temperature_range_max",
+    "load_cell_capacity",
+)
 
 
 def instrument_out_from_row(row: dict) -> InstrumentOut:
