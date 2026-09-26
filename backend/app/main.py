@@ -1,9 +1,11 @@
 import os
 
-from fastapi import APIRouter, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.supabase_client import user_client
+from app.deps import AuthContext, get_auth_context
+from app.routers.instruments import router as instruments_router
+from app.routers.sessions import router as sessions_router
 
 app = FastAPI(title="ScaleCert API — walking skeleton")
 
@@ -21,17 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mounted under /api so the three routes are reachable at /api/health,
-# /api/whoami, /api/whoami/debug — matching the public path Vercel's rewrite
-# forwards to this service (see /vercel.json), which sends the full incoming
-# path through rather than stripping the prefix.
+# Mounted under /api so every route is reachable at /api/..., matching the
+# public path Vercel's rewrite forwards to this service (see /vercel.json),
+# which sends the full incoming path through rather than stripping the prefix.
 api = APIRouter(prefix="/api")
-
-
-def _bearer_token(authorization: str | None) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
-    return authorization.split(" ", 1)[1]
 
 
 @api.get("/health")
@@ -40,10 +35,8 @@ def health():
 
 
 @api.get("/whoami")
-def whoami(authorization: str | None = Header(default=None)):
-    token = _bearer_token(authorization)
-    client = user_client(token)
-    rows = client.table("profiles").select("id, role, full_name").execute().data
+def whoami(auth: AuthContext = Depends(get_auth_context)):
+    rows = auth.client.table("profiles").select("id, role, full_name").execute().data
 
     # RLS fails silently: zero rows is a valid, non-error outcome (a misauthored
     # policy looks identical), so it is reported as such rather than as a 404.
@@ -53,10 +46,8 @@ def whoami(authorization: str | None = Header(default=None)):
 
 
 @api.get("/whoami/debug")
-def whoami_debug(authorization: str | None = Header(default=None)):
-    token = _bearer_token(authorization)
-    client = user_client(token)
-    rows = client.table("profiles").select("id, role, full_name").execute().data
+def whoami_debug(auth: AuthContext = Depends(get_auth_context)):
+    rows = auth.client.table("profiles").select("id, role, full_name").execute().data
 
     # Expected with correct RLS: a technician sees exactly 1 row (their own, via
     # profiles_select_own's `id = auth.uid()` clause); an approver sees every row
@@ -65,5 +56,8 @@ def whoami_debug(authorization: str | None = Header(default=None)):
     my_role = rows[0]["role"] if rows else None
     return {"rls": "applied", "visible_profile_count": len(rows), "role": my_role}
 
+
+api.include_router(instruments_router)
+api.include_router(sessions_router)
 
 app.include_router(api)

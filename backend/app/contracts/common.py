@@ -28,6 +28,40 @@ class Direction(str, Enum):
     DOWN = "down"
 
 
+class IndicationType(str, Enum):
+    """Mirrors db/schema.sql's `indication_type` enum. The engine has no use
+    for this (it doesn't affect the Weighing calculation), so — unlike
+    accuracy_class/verification_type — there is no engine enum to reuse."""
+
+    DIGITAL = "digital"
+    ANALOG = "analog"
+    NON_SELF_INDICATING = "non_self_indicating"
+
+
+class SessionStatus(str, Enum):
+    """Mirrors db/schema.sql's `session_status` enum."""
+
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    RETURNED = "returned"
+    APPROVED = "approved"
+    ISSUED = "issued"
+    SUPERSEDED = "superseded"
+
+
+class TestType(str, Enum):
+    """Mirrors db/schema.sql's `test_type` enum."""
+
+    __test__ = False  # not a pytest test class — its name just starts with "Test"
+
+    WEIGHING = "weighing"
+    REPEATABILITY = "repeatability"
+    ECCENTRICITY = "eccentricity"
+    DISCRIMINATION = "discrimination"
+    TILTING = "tilting"
+    SENSITIVITY = "sensitivity"
+
+
 def _parse_strict_decimal(value: Any) -> Decimal:
     """Parse a JSON string or int into an exact Decimal. A bare float is
     REJECTED outright, not coerced — an unquoted float literal in JSON

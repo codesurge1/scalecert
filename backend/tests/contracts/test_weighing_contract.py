@@ -9,7 +9,9 @@ from pydantic import TypeAdapter, ValidationError
 from app.contracts.common import Direction, StrictDecimal
 from app.contracts.weighing import (
     WeighingReadingIn,
+    WeighingReadingSubmitIn,
     WeighingResultOut,
+    WeighingSequenceEntryOut,
     reading_to_engine_kwargs,
     result_to_out,
 )
@@ -191,3 +193,37 @@ def test_every_engine_accuracy_class_is_a_valid_contract_value():
 def test_every_engine_verification_type_is_a_valid_contract_value():
     for member in VerificationType:
         WeighingReadingIn(**dict(_VALID_READING, verification_type=member.value))
+
+
+# ---------------------------------------------------------------------------
+# WeighingReadingSubmitIn / WeighingSequenceEntryOut — the client-facing
+# shapes for GET .../sequence and POST .../readings.
+# ---------------------------------------------------------------------------
+def test_submit_in_parses_without_L_or_instrument_context():
+    submission = WeighingReadingSubmitIn(sequence_no=0, direction="up", I="300.4", delta_l="0.5", E0="0")
+    assert submission.sequence_no == 0
+    assert submission.direction is Direction.UP
+    assert not hasattr(submission, "L")
+
+
+def test_submit_in_rejects_negative_sequence_no():
+    with pytest.raises(ValidationError):
+        WeighingReadingSubmitIn(sequence_no=-1, direction="up", I="1", delta_l="0", E0="0")
+
+
+def test_submit_in_rejects_unknown_field_including_L():
+    with pytest.raises(ValidationError):
+        WeighingReadingSubmitIn(sequence_no=0, direction="up", I="1", delta_l="0", E0="0", L="300")
+
+
+def test_sequence_entry_out_serializes_kind_and_numbers_as_strings():
+    entry = WeighingSequenceEntryOut(sequence_no=0, L="300", m="300", kind="max", mpe="0.5")
+    dumped = entry.model_dump(mode="json")
+    assert dumped["kind"] == "max"
+    assert dumped["L"] == "300"
+    assert dumped["sequence_no"] == 0
+
+
+def test_sequence_entry_out_rejects_bad_kind():
+    with pytest.raises(ValidationError):
+        WeighingSequenceEntryOut(sequence_no=0, L="300", m="300", kind="sideways", mpe="0.5")

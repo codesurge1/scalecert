@@ -2,7 +2,7 @@
 
 Purpose: describe the system's structure — schema, engine, roles, API surface — as the single source of truth for how ScaleCert is built.
 
-> STATUS: schema, roles, session lifecycle (as of ADR-0005), API surface (walking-skeleton scope), engine design (Weighing calculation + load-sequence generator), and the Weighing contracts/API-validation layer are authoritative. PDF and audit sections are pending their build tasks.
+> STATUS: schema, roles, session lifecycle (as of ADR-0005), engine design (Weighing calculation + load-sequence generator), the Weighing contracts/API-validation layer, and the API surface (instruments/sessions/Weighing readings — DB-integration verified via preview only, not in-sandbox) are authoritative. PDF and audit are pending their build tasks.
 
 ## System overview
 
@@ -93,10 +93,31 @@ Deployed as two [Vercel Services](https://vercel.com/docs/services) in one proje
 
 Locally, the same mount path is used: `uvicorn app.main:app` still serves `/api/health`, `/api/whoami`, `/api/whoami/debug` on `http://localhost:8000`. CORS is same-origin (and therefore off) in production; for local dev, an env-configurable allowed origin (`CORS_ALLOW_ORIGIN`, default `http://localhost:5173`) replaces what would otherwise be a permissive wildcard.
 
-Current routes (walking-skeleton scope only — no business logic yet):
+Current routes:
 - `GET /api/health` — liveness, no auth, no DB.
-- `GET /api/whoami` — per-request JWT-scoped read of the caller's own `profiles` row.
-- `GET /api/whoami/debug` — same auth, returns the visible-row count; the RLS "who am I / what can I see" debug path from CLAUDE.md.
+- `GET /api/whoami` / `GET /api/whoami/debug` — the walking-skeleton RLS debug routes.
+- `POST /api/instruments`, `GET /api/instruments`, `GET /api/instruments/{id}` — register/list/fetch an instrument.
+- `POST /api/sessions`, `GET /api/sessions/{id}` — open a Weighing session for an instrument (also inserts its `session_test_selection` row for `weighing`); fetch a session including its selected tests.
+- `GET /api/sessions/{id}/weighing/sequence` — the generated load sequence (see below).
+- `POST /api/sessions/{id}/weighing/readings` — submit one reading; the server computes the verdict and writes reading + result together.
+
+Every route depends on `app.deps.get_auth_context` (`Depends(get_auth_context)`) — one reusable dependency that extracts the caller's JWT, builds the per-request user-scoped client (`app.supabase_client.user_client`), and resolves `auth.uid()` via GoTrue's `get_user(jwt)` so a route needing it for an insert payload (`registered_by`, `created_by`, `entered_by`, `actor_id`) never has to re-derive it. There is still no service-role client anywhere in `backend/`.
+
+**Server-derives-L.** The technician never enters or sees a raw `L` value as something they typed — `GET .../weighing/sequence` calls `engine.load_sequence.generate_load_sequence` with the session's instrument params and returns each entry's `sequence_no` (its stable index), `L`, `m`, `kind`, and `mpe`. `POST .../weighing/readings` takes only `sequence_no`, `I`, `delta_l`, `direction`, `E0` from the client (`WeighingReadingSubmitIn` — deliberately narrower than the engine-ready `WeighingReadingIn`), regenerates the *same* sequence server-side, and looks up `L` for that `sequence_no`. Both routes call `app.services.weighing.build_sequence` — the one place `generate_load_sequence` is invoked from the API layer — so they can never disagree about what a given `sequence_no` means. Deterministic, so nothing about the sequence is stored; it's recomputed on every call.
+
+**Reading + result, written together.** supabase-py/PostgREST has no client-side multi-table transaction. The chosen approach: insert the reading, then insert the result; if the result insert fails, delete the just-inserted reading rather than leave one with no computed verdict (`app/routers/sessions.py`, `submit_weighing_reading`). A single Postgres RPC doing both inserts atomically would remove this rollback step entirely — a reasonable follow-up, not built in this task.
+
+**Readings only while `draft`** (`app.services.sessions.ensure_session_is_draft`) — a 409 otherwise. This deliberately only enforces that one rule; the `returned → draft` reopening and the `submitted`/`approved`/`issued` transitions are a later task's concern, and nothing here blocks building that later.
+
+**Audit is non-fatal.** On reading submission, an `audit_log` row is inserted (`action='weighing_reading_submitted'`); if that insert fails, a warning is logged and the request still returns success (docs/plan.md: "audit writes non-fatal but surfaced"). No hash chain (stretch/out of scope, ADR-0005).
+
+**Two Decimal policies, deliberately different, at two different boundaries.** `StrictDecimal` (`app.contracts.common`) governs untrusted CLIENT input and rejects a bare float outright. Supabase/PostgREST returns `numeric` columns as JSON numbers (Python `float`) on every read — a completely different, trusted boundary — so `app.db_decimal.decimal_from_db_value` converts those via `Decimal(str(value))` (safe: Python's float repr is shortest-round-trip) before a DB row ever reaches an `Out` contract's `StrictDecimal` field. Passing a raw DB-row float straight into a `StrictDecimal` field would incorrectly trip the client-input rejection on every normal read — `instrument_out_from_row`/`instrument_params_from_row` (`app.contracts.instrument`) exist specifically to do this conversion first.
+
+**Errors are typed, not raw 500s:** missing/invalid body → 422 (Pydantic, automatic); session not `draft` when submitting a reading → 409; `sequence_no` out of range → 422; instrument/session not found *or* not visible under RLS → 404 (deliberately not distinguished — CLAUDE.md: RLS fails silently, and a caller shouldn't be able to probe for the existence of another user's row either way).
+
+**Known follow-up, not solved here.** `engine/` lives outside `backend/`'s own Vercel-service root (flagged when the Weighing contracts were added) — these routes now actually call `engine.load_sequence`/`engine.weighing` at request time, so this needs resolving before a real deploy, not just before a real route existed.
+
+**Testing note.** This sandbox has no egress to a live Supabase project. The pure logic — contract validation, the engine↔contract adapters, the `sequence_no → L` lookup, the not-draft rule — is unit-tested directly (`backend/tests/services/`, `backend/tests/contracts/`). The routes themselves are tested with the entire DB layer mocked (`backend/tests/routers/`) via `app.dependency_overrides` (for auth) and `monkeypatch` (for `app.repositories.*`) — this proves the routing/error-code/orchestration logic, not that the real SQL against the real schema behaves as expected. That needs the preview deploy (see SESSION_LOG.md for the verification steps).
 
 ## PDF & audit
 

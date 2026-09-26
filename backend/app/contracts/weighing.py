@@ -8,7 +8,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.contracts.common import Direction, StrictDecimal
-from engine.types import AccuracyClass, VerificationType, WeighingResult
+from engine.types import AccuracyClass, LoadKind, VerificationType, WeighingResult
 
 
 class WeighingReadingIn(BaseModel):
@@ -68,6 +68,40 @@ class WeighingResultOut(BaseModel):
     mpe_in_e: StrictDecimal
     band_lower_m: StrictDecimal
     band_upper_m: Optional[StrictDecimal]
+
+
+class WeighingReadingSubmitIn(BaseModel):
+    """What the technician's client actually POSTs for one reading —
+    deliberately narrower than `WeighingReadingIn`. `L`, `accuracy_class`,
+    `verification_type`, and `e` are NOT here: they come from the server's
+    own instrument/session lookup and the regenerated load sequence
+    (`sequence_no` is the only thing that ties this submission to an `L`),
+    never from the client. The route handler merges this with that
+    server-derived context to build the full `WeighingReadingIn` the engine
+    seam expects.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence_no: int = Field(ge=0, description="Index into the session's generated load sequence.")
+    direction: Direction
+    I: StrictDecimal
+    delta_l: StrictDecimal
+    E0: StrictDecimal
+
+
+class WeighingSequenceEntryOut(BaseModel):
+    """One entry of `GET /api/sessions/{id}/weighing/sequence` — mirrors
+    engine.types.LoadEntry, plus the `sequence_no` (its stable index) that
+    `POST .../readings` expects back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence_no: int
+    L: StrictDecimal
+    m: StrictDecimal
+    kind: LoadKind
+    mpe: StrictDecimal
 
 
 def reading_to_engine_kwargs(reading: WeighingReadingIn) -> dict:

@@ -125,3 +125,17 @@ Append new entries at the bottom. Never edit or delete a past entry.
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Repeatability's ~50%/100% load values (working default).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-26] — Weighing API: instruments, sessions, load sequence, readings
+
+**Done:** Added the minimum backend chain for the Weighing vertical slice, all under `/api`, all through a new reusable `app.deps.get_auth_context` dependency (per-request JWT-scoped client + resolved `auth.uid()` via GoTrue, no service-role client). `POST/GET /api/instruments[/{id}]`; `POST /api/sessions`, `GET /api/sessions/{id}` (creates the session's `weighing` `session_test_selection` row too); `GET /api/sessions/{id}/weighing/sequence` (calls `engine.load_sequence.generate_load_sequence` — server-derived, never stored); `POST /api/sessions/{id}/weighing/readings` (regenerates the sequence, looks up `L` for the submitted `sequence_no`, calls the engine, writes `test_readings` + `test_results` together — insert-then-insert with a rollback-delete on result-insert failure, since supabase-py has no client-side multi-table transaction — then a non-fatal `audit_log` insert). Split `backend/app/` into `contracts/` (added `instrument.py`, `session.py`; extended `weighing.py` with the narrower client-facing `WeighingReadingSubmitIn`/`WeighingSequenceEntryOut`; extended `common.py` with `IndicationType`/`SessionStatus`/`TestType`), `services/` (pure: `weighing.py` — sequence_no→L lookup + engine orchestration; `sessions.py` — the not-draft rule), and `repositories/` (thin, mockable DB IO) — specifically so the pure logic is unit-testable without live Supabase (this sandbox has no egress to one). Found and fixed a real bug during testing: PostgREST returns `numeric` columns as JSON floats, which would have tripped `StrictDecimal`'s client-input float rejection on every normal read — `app.db_decimal.decimal_from_db_value` (a deliberately different, DB-row-safe policy) now converts before those values ever reach an `Out` contract. Ran the combined suite: **179 passed** (137 existing + 42 new, no regressions, engine purity test still green). Updated `docs/architecture.md`'s API surface section in full.
+
+**Next:** Verify the DB-integration path on the preview deploy (see the checklist in this same reply/PR description); then the frontend forms for this slice (Phase 2), and after that, submit → approve-by-a-different-user → PDF → public verify to close out the vertical slice.
+
+**Open questions:**
+- Band-1 intermediate load spacing (deterministic placeholder until RRSL confirms).
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Repeatability's ~50%/100% load values (working default).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
