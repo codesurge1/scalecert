@@ -123,6 +123,7 @@ export function WeighingSessionPage() {
           sequence={sequence}
           observerDefault={authSession?.user?.email}
           initialReadings={readingRecords}
+          actorId={authSession?.user?.id}
         />
       )}
     </div>
