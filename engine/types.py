@@ -218,6 +218,27 @@ class TiltingUnloadedCheckResult:
 
 
 @dataclass(frozen=True)
+class RunComparisonResult:
+    """Cross-run comparison (engine/comparison.py) — the shared math behind
+    every OIML test that is the SAME procedure re-run under different
+    conditions, where the test IS the comparison between runs: clause 1
+    Weighing at multiple temperatures (page 9), clause 13 Damp heat
+    (initial / high-temp+humidity / final), clause 15 Endurance (initial /
+    after N cycles / final). `variation_error = |Ec_a - Ec_b|`, checked
+    against that load's own mpe (limit inclusive, same convention as
+    WeighingResult). Weighing is the first consumer; Damp heat and
+    Endurance are not built yet but can call compute_run_comparison
+    unmodified once they are (docs/architecture.md)."""
+
+    Ec_a: Decimal
+    Ec_b: Decimal
+    variation_error: Decimal
+    mpe: Decimal
+    margin: Decimal
+    passed: bool
+
+
+@dataclass(frozen=True)
 class TiltingLoadedCheckResult:
     """Tilting's criterion (b) (engine/tilting.py), checked independently at
     each of the two loaded rows (a mid load and Max): the corrected error at

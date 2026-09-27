@@ -123,6 +123,30 @@ create table session_test_selection (
   unique (session_id, test_type)
 );
 
+-- A "run" of a test under a labelled set of conditions (feat/test-runs-
+-- conditions) — the concept behind every OIML test that is the SAME
+-- procedure re-run more than once, where the test IS the comparison
+-- between runs: clause 1 Weighing at multiple temperatures (page 9),
+-- clause 13 Damp heat (initial / high-temp+humidity / final), clause 15
+-- Endurance (initial / after N cycles / final). `test_readings.run_id` /
+-- `test_results.run_id` are nullable FKs to this table: NULL means "the
+-- default/only run" — every reading/result recorded before this table
+-- existed, and every reading of a test that never grows a second run,
+-- keeps working completely unchanged (docs/architecture.md). Only a test
+-- that actually gets a SECOND run needs a `test_runs` row at all — the
+-- first/only run of any test is never required to have one.
+create table test_runs (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references test_sessions(id) on delete cascade,
+  test_type test_type not null,
+  run_label text not null,          -- e.g. "Initial", "at 40 °C", "After 6 months / 100 000 cycles"
+  conditions jsonb,                 -- free-form condition metadata (temperature_c, humidity_pct, cycle_count, ...) — opaque to the DB, not engine input
+  ordinal integer not null,         -- display/creation order, 0-based, assigned server-side
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now(),
+  unique (session_id, test_type, ordinal)
+);
+
 create table test_readings (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references test_sessions(id) on delete cascade,
@@ -131,6 +155,7 @@ create table test_readings (
   direction text,        -- 'up' | 'down' | null  (bidirectional tests use this)
   series_no integer,     -- Repeatability's two series; null for other tests
   position_no integer,   -- Eccentricity's 1-4; null for other tests
+  run_id uuid references test_runs(id),  -- null = the default/only run (feat/test-runs-conditions)
   data jsonb not null,   -- raw inputs (L, I, deltaL, ...); shape enforced by a Pydantic model per test_type
   entered_by uuid not null references profiles(id),
   created_at timestamptz not null default now()
@@ -141,6 +166,7 @@ create table test_results (
   session_id uuid not null references test_sessions(id) on delete cascade,
   test_type test_type not null,
   reading_id uuid references test_readings(id),   -- null for a test-level (not per-reading) verdict
+  run_id uuid references test_runs(id),  -- null = the default/only run (feat/test-runs-conditions)
   result jsonb not null,   -- full derivation: E, Ec, E0, mpe, margin, ... per test_type
   passed boolean,
   computed_at timestamptz not null default now()
@@ -319,6 +345,7 @@ alter table profiles enable row level security;
 alter table instruments enable row level security;
 alter table test_sessions enable row level security;
 alter table session_test_selection enable row level security;
+alter table test_runs enable row level security;
 alter table test_readings enable row level security;
 alter table test_results enable row level security;
 alter table audit_log enable row level security;
@@ -368,6 +395,19 @@ create policy sts_select on session_test_selection for select
   using (exists (select 1 from test_sessions s where s.id = session_id
          and (s.created_by = auth.uid() or public.get_my_role() in ('approver','admin'))));
 create policy sts_write on session_test_selection for all
+  using (exists (select 1 from test_sessions s where s.id = session_id
+         and s.created_by = auth.uid() and s.status = 'draft'))
+  with check (exists (select 1 from test_sessions s where s.id = session_id
+         and s.created_by = auth.uid() and s.status = 'draft'));
+
+-- test_runs: creator manages while draft; creator + approver/admin read.
+-- Same shape as sts_select/sts_write (session_test_selection) rather than
+-- readings_write's entered_by check: a run is session-level metadata (who
+-- labelled this run), not a per-actor reading.
+create policy runs_select on test_runs for select
+  using (exists (select 1 from test_sessions s where s.id = session_id
+         and (s.created_by = auth.uid() or public.get_my_role() in ('approver','admin'))));
+create policy runs_write on test_runs for all
   using (exists (select 1 from test_sessions s where s.id = session_id
          and s.created_by = auth.uid() and s.status = 'draft'))
   with check (exists (select 1 from test_sessions s where s.id = session_id

@@ -88,6 +88,13 @@ class WeighingReadingSubmitIn(BaseModel):
     I: StrictDecimal
     delta_l: StrictDecimal
     E0: StrictDecimal
+    run_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which run (feat/test-runs-conditions) this reading belongs to. Omitted/null "
+            "means the default/only run — the same behavior as before runs existed."
+        ),
+    )
 
 
 class WeighingSequenceEntryOut(BaseModel):
@@ -119,6 +126,7 @@ class WeighingReadingRecordOut(BaseModel):
 
     sequence_no: int
     direction: Direction
+    run_id: Optional[str] = None
     I: StrictDecimal
     delta_l: StrictDecimal
     E0: StrictDecimal
@@ -141,6 +149,7 @@ def reading_and_result_to_record_out(reading_row: dict, result_row: dict) -> Wei
     return WeighingReadingRecordOut(
         sequence_no=reading_row["sequence_no"],
         direction=reading_row["direction"],
+        run_id=reading_row.get("run_id"),
         I=data["I"],
         delta_l=data["delta_l"],
         E0=data["E0"],

@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
@@ -36,6 +37,7 @@ from app.contracts.sensitivity import (
     SensitivityResultOut,
     reading_and_result_to_record_out as sensitivity_reading_and_result_to_record_out,
 )
+from app.contracts.runs import RunComparisonEntryOut, TestRunCreateIn, TestRunOut, run_row_to_out
 from app.contracts.session import SessionIn, SessionOut, SessionReturnIn, session_out_from_rows
 from app.contracts.tilting import TiltingReadingSubmitIn, TiltingStateOut
 from app.contracts.voltage_variations import (
@@ -64,6 +66,7 @@ from app.pdf.certificate import generate_certificate_pdf
 from app.repositories import instruments as instruments_repo
 from app.repositories import profiles as profiles_repo
 from app.repositories import readings as readings_repo
+from app.repositories import runs as runs_repo
 from app.repositories import sessions as sessions_repo
 from app.repositories import storage as storage_repo
 from app.repositories.errors import RepositoryError
@@ -72,6 +75,7 @@ from app.services import discrimination as discrimination_service
 from app.services import disturbance as disturbance_service
 from app.services import eccentricity as eccentricity_service
 from app.services import repeatability as repeatability_service
+from app.services import runs as runs_service
 from app.services import sensitivity as sensitivity_service
 from app.services import tilting as tilting_service
 from app.services import voltage_variations as voltage_variations_service
@@ -410,37 +414,123 @@ def get_weighing_sequence(
     ]
 
 
-@router.get("/{session_id}/weighing/readings", response_model=list[WeighingReadingRecordOut])
-def list_weighing_readings(
-    session_id: str, auth: AuthContext = Depends(get_auth_context)
-) -> list[WeighingReadingRecordOut]:
-    """Read-only: every submitted Weighing reading for this session paired
-    with its computed result, so the client can reconstruct the R76-2 form
-    table on load — closing the "refresh loses progress" gap
-    (docs/architecture.md known-gaps). RLS-scoped like every other route:
-    creator + approver/admin see it, per the existing readings/results
-    select policies — no new policy needed, no schema change.
-    """
-    _get_session_or_404(auth.client, session_id)  # visibility check only
+@router.get("/{session_id}/weighing/runs", response_model=list[TestRunOut])
+def list_weighing_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
+    """Every explicitly created run (feat/test-runs-conditions) for this
+    session's Weighing test, in creation order. Empty for the common case —
+    a Weighing test that never grows beyond its implicit default (null
+    run_id) run — which is exactly the point: nothing here changes what an
+    empty list means to a client that predates runs."""
+    _get_session_or_404(auth.client, session_id)
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    return [run_row_to_out(row) for row in run_rows]
 
-    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
-    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+
+@router.post("/{session_id}/weighing/runs", response_model=TestRunOut, status_code=201)
+def create_weighing_run(
+    session_id: str,
+    payload: TestRunCreateIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> TestRunOut:
+    """Create a new labelled run (e.g. "at 40 °C") for this session's
+    Weighing test. The ordinal is server-derived — one past however many
+    runs already exist — never client-supplied, same "server derives it"
+    discipline as every other computed/sequential value in this app."""
+    session_row = _get_session_or_404(auth.client, session_id)
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    existing_runs = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    ordinal = runs_service.next_ordinal(existing_runs)
+
+    try:
+        run_row = runs_repo.insert_run(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.WEIGHING.value,
+            run_label=payload.run_label,
+            conditions=payload.conditions,
+            ordinal=ordinal,
+            created_by=auth.user_id,
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not create the run ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+    return run_row_to_out(run_row)
+
+
+def _weighing_reading_and_result_rows(client, session_id: str) -> tuple[list[dict], dict]:
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    result_rows = readings_repo.list_results(client, session_id=session_id, test_type=TestType.WEIGHING.value)
     results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+    return reading_rows, results_by_reading_id
 
+
+def _weighing_records_for_run(
+    reading_rows: list[dict], results_by_reading_id: dict, run_id: Optional[str]
+) -> list[WeighingReadingRecordOut]:
     # There's no update endpoint (docs/architecture.md) — resubmitting a
     # direction inserts a second reading rather than overwriting the first.
     # reading_rows is ordered by created_at, so this dict comprehension's
     # last-write-wins semantics keep only the latest submission per
-    # (sequence_no, direction), matching what the form should actually show.
+    # (sequence_no, direction) WITHIN this run — matching what the form
+    # should actually show. Filtering by run_id first (rather than after)
+    # matters once two runs share a sequence_no: without it, a later
+    # submission in run B would wrongly shadow an earlier one in run A.
+    matching_rows = [row for row in reading_rows if row.get("run_id") == run_id]
     latest_by_key = {
         (reading_row["sequence_no"], reading_row["direction"]): (reading_row, results_by_reading_id[reading_row["id"]])
-        for reading_row in reading_rows
+        for reading_row in matching_rows
         if reading_row["id"] in results_by_reading_id
     }
-
     records = [reading_and_result_to_record_out(reading_row, result_row) for reading_row, result_row in latest_by_key.values()]
     records.sort(key=lambda record: (record.sequence_no, record.direction.value))
     return records
+
+
+@router.get("/{session_id}/weighing/runs/compare", response_model=list[RunComparisonEntryOut])
+def compare_weighing_runs(
+    session_id: str,
+    run_id_a: Optional[str] = None,
+    run_id_b: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+) -> list[RunComparisonEntryOut]:
+    """Per-load cross-run comparison (feat/test-runs-conditions): the
+    variation error `|Ec_runA - Ec_runB|` at every load both runs have a
+    reading for, checked against that load's own mpe. Either run_id may be
+    omitted, meaning the implicit default/only run (null run_id) — so a
+    Weighing test with exactly one extra run can compare it against the
+    original readings without those ever having been tagged with a run_id.
+    """
+    _get_session_or_404(auth.client, session_id)
+    reading_rows, results_by_reading_id = _weighing_reading_and_result_rows(auth.client, session_id)
+    records_a = _weighing_records_for_run(reading_rows, results_by_reading_id, run_id_a)
+    records_b = _weighing_records_for_run(reading_rows, results_by_reading_id, run_id_b)
+    return runs_service.compare_records(records_a, records_b, run_id_a=run_id_a, run_id_b=run_id_b)
+
+
+@router.get("/{session_id}/weighing/readings", response_model=list[WeighingReadingRecordOut])
+def list_weighing_readings(
+    session_id: str,
+    run_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+) -> list[WeighingReadingRecordOut]:
+    """Read-only: every submitted Weighing reading for this session's given
+    run (default: the implicit default/only run, null run_id — exactly the
+    pre-existing behavior) paired with its computed result, so the client
+    can reconstruct the R76-2 form table on load — closing the "refresh
+    loses progress" gap (docs/architecture.md known-gaps). RLS-scoped like
+    every other route: creator + approver/admin see it, per the existing
+    readings/results select policies — no new policy needed, no schema
+    change beyond the additive `run_id` column.
+    """
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    reading_rows, results_by_reading_id = _weighing_reading_and_result_rows(auth.client, session_id)
+    return _weighing_records_for_run(reading_rows, results_by_reading_id, run_id)
 
 
 @router.post("/{session_id}/weighing/readings", response_model=WeighingResultOut, status_code=201)
@@ -455,6 +545,11 @@ def submit_weighing_reading(
         ensure_session_is_draft(SessionStatus(session_row["status"]))
     except SessionNotDraft as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if payload.run_id is not None:
+        run_row = runs_repo.get_run(auth.client, payload.run_id)
+        if run_row is None or run_row["session_id"] != session_id or run_row["test_type"] != TestType.WEIGHING.value:
+            raise HTTPException(status_code=422, detail=f"run {payload.run_id!r} does not belong to this session's Weighing test")
 
     instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
     instrument = instrument_params_from_row(instrument_row)
@@ -479,6 +574,7 @@ def submit_weighing_reading(
             test_type=TestType.WEIGHING.value,
             sequence_no=payload.sequence_no,
             direction=payload.direction.value,
+            run_id=payload.run_id,
             data=submission.reading.model_dump(mode="json"),
         )
     except RepositoryError as exc:
@@ -493,6 +589,7 @@ def submit_weighing_reading(
             session_id=session_id,
             test_type=TestType.WEIGHING.value,
             reading_id=reading_row["id"],
+            run_id=payload.run_id,
             result=submission.result_out.model_dump(mode="json"),
             passed=submission.result_out.passed,
         )

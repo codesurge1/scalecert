@@ -4,6 +4,7 @@ import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 import { useWeighingReadings } from "@/hooks/useWeighingReadings";
 import { GuidedEntryPanel } from "@/components/weighing/GuidedEntryPanel";
+import { RunSelector } from "@/components/weighing/RunSelector";
 import { FORM_COLUMNS, buildGuidedWalkPositions } from "@/components/weighing/formColumns";
 import { cn } from "@/lib/utils";
 
@@ -130,6 +131,12 @@ export function WeighingFormTable({
   observerDefault,
   initialReadings,
   actorId,
+  runId = null,
+  runs,
+  selectedRunId = null,
+  onSelectRun,
+  onCreateRun,
+  comparison,
 }) {
   const [testDate, setTestDate] = useState(todayIso());
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -153,6 +160,7 @@ export function WeighingFormTable({
     initialReadings,
     e0,
     actorId,
+    runId,
   });
 
   // The guided panel's "where am I" pointer — shared state, not owned by
@@ -278,6 +286,26 @@ export function WeighingFormTable({
     // `lg`, `display:grid` (the base class) still applies, unchanged.
     <div className="grid gap-4 lg:flex lg:h-full lg:min-h-0">
       <div className="order-2 grid min-w-0 gap-2 lg:order-none lg:flex lg:h-full lg:min-h-0 lg:flex-1 lg:flex-col">
+        {/* Runs/conditions (feat/test-runs-conditions) — near-invisible
+            when there's only the implicit default run (RunSelector's own
+            job to stay minimal in that case); becomes a small tab bar +
+            "Add run" control once a technician creates a second run, e.g.
+            re-running this same Weighing test at a different temperature
+            (OIML R76-2 page 9). `onSelectRun`/`onCreateRun` are optional —
+            omitted entirely, this renders nothing, so any other caller of
+            this component (there is none today) stays unaffected. */}
+        {onSelectRun && onCreateRun ? (
+          <div className="lg:shrink-0">
+            <RunSelector
+              runs={runs}
+              selectedRunId={selectedRunId}
+              onSelectRun={onSelectRun}
+              onCreateRun={onCreateRun}
+              disabled={disabled}
+            />
+          </div>
+        ) : null}
+
         {/* `lg:shrink-0` — guarantees this header strip keeps its natural
             height under the flex column's default shrink behavior, so any
             space pressure at `lg`+ is absorbed by the table sheet below
@@ -543,6 +571,58 @@ export function WeighingFormTable({
               ) : null}
             </div>
           </div>
+
+          {comparison && comparison.length > 0 ? (
+            <div className="mt-3 shrink-0 overflow-auto">
+              <p className="text-sm">
+                Variation between runs (|Δ<i>E</i>
+                <sub>c</sub>| vs mpe) — Initial compared to the currently selected run:
+              </p>
+              <table className="mt-1.5 w-full border-collapse text-xs">
+                <thead>
+                  <tr>
+                    <th className="border border-neutral-900 px-2 py-1">Load</th>
+                    <th className="border border-neutral-900 px-2 py-1">Dir</th>
+                    <th className="border border-neutral-900 px-2 py-1">
+                      <i>E</i>
+                      <sub>c</sub> (Initial)
+                    </th>
+                    <th className="border border-neutral-900 px-2 py-1">
+                      <i>E</i>
+                      <sub>c</sub> (this run)
+                    </th>
+                    <th className="border border-neutral-900 px-2 py-1">|Δ|</th>
+                    <th className="border border-neutral-900 px-2 py-1">mpe</th>
+                    <th className="border border-neutral-900 px-2 py-1">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.map((entry) => (
+                    <tr key={`${entry.sequence_no}-${entry.direction}`}>
+                      <td className="border border-neutral-900 px-2 py-1 text-right">
+                        {roundLoadForDisplay(sequence[entry.sequence_no]?.L)}
+                      </td>
+                      <td className="border border-neutral-900 px-2 py-1 text-center">{entry.direction}</td>
+                      <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.Ec_a)}</td>
+                      <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.Ec_b)}</td>
+                      <td className="border border-neutral-900 px-2 py-1 text-right">
+                        {roundForDisplay(entry.variation_error)}
+                      </td>
+                      <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.mpe)}</td>
+                      <td
+                        className={cn(
+                          "border border-neutral-900 px-2 py-1 text-center font-medium",
+                          entry.passed ? "text-emerald-700" : "text-red-700",
+                        )}
+                      >
+                        {entry.passed ? "PASS" : "FAIL"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
 
           <div className="mt-3 shrink-0">
             <p className="text-sm">Remarks:</p>
