@@ -20,6 +20,13 @@ from app.contracts.eccentricity import (
     EccentricitySetupOut,
     reading_and_result_to_record_out as eccentricity_reading_and_result_to_record_out,
 )
+from app.contracts.disturbance import (
+    DisturbanceConditionOut,
+    DisturbanceReadingRecordOut,
+    DisturbanceReadingSubmitIn,
+    DisturbanceResultOut,
+    reading_and_result_to_record_out as disturbance_reading_and_result_to_record_out,
+)
 from app.contracts.instrument import instrument_out_from_row, instrument_params_from_row
 from app.contracts.repeatability import RepeatabilityReadingSubmitIn, RepeatabilitySeriesOut
 from app.contracts.sensitivity import (
@@ -31,6 +38,13 @@ from app.contracts.sensitivity import (
 )
 from app.contracts.session import SessionIn, SessionOut, SessionReturnIn, session_out_from_rows
 from app.contracts.tilting import TiltingReadingSubmitIn, TiltingStateOut
+from app.contracts.voltage_variations import (
+    VoltageVariationsLevelOut,
+    VoltageVariationsReadingRecordOut,
+    VoltageVariationsReadingSubmitIn,
+    VoltageVariationsResultOut,
+    reading_and_result_to_record_out as voltage_variations_reading_and_result_to_record_out,
+)
 from app.contracts.weighing import (
     WeighingReadingRecordOut,
     WeighingReadingSubmitIn,
@@ -55,10 +69,12 @@ from app.repositories import storage as storage_repo
 from app.repositories.errors import RepositoryError
 from app.services import certificate as certificate_service
 from app.services import discrimination as discrimination_service
+from app.services import disturbance as disturbance_service
 from app.services import eccentricity as eccentricity_service
 from app.services import repeatability as repeatability_service
 from app.services import sensitivity as sensitivity_service
 from app.services import tilting as tilting_service
+from app.services import voltage_variations as voltage_variations_service
 from app.services import weighing as weighing_service
 from app.services import zero_tare as zero_tare_service
 from app.services.sessions import (
@@ -1072,6 +1088,317 @@ def submit_sensitivity_reading(
         logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
 
     return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Voltage variations — clause 11 (A.5.4). Computed, unlike every clause-12.x
+# test below: reuses the Weighing engine directly at a fixed 10e load,
+# tested at three power-supply voltage levels (reference/lower/upper). N/A
+# for non-self-indicating instruments (no electronics to power-vary — same
+# "electronic instruments only" gate every disturbance test below uses).
+# See app/services/voltage_variations.py.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/voltage-variations/levels", response_model=list[VoltageVariationsLevelOut])
+def get_voltage_variations_levels(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[VoltageVariationsLevelOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    return voltage_variations_service.levels_with_mpe(instrument, verification_type)
+
+
+@router.get("/{session_id}/voltage-variations/readings", response_model=list[VoltageVariationsReadingRecordOut])
+def list_voltage_variations_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[VoltageVariationsReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+
+    reading_rows = readings_repo.list_readings(auth.client, session_id=session_id, test_type=TestType.VOLTAGE_VARIATIONS.value)
+    result_rows = readings_repo.list_results(auth.client, session_id=session_id, test_type=TestType.VOLTAGE_VARIATIONS.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_sequence_no = {
+        reading_row["sequence_no"]: (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [voltage_variations_reading_and_result_to_record_out(r, res) for r, res in latest_by_sequence_no.values()]
+    records.sort(key=lambda record: voltage_variations_service.level_index(record.level_key))
+    return records
+
+
+@router.post("/{session_id}/voltage-variations/readings", response_model=VoltageVariationsResultOut, status_code=201)
+def submit_voltage_variations_reading(
+    session_id: str,
+    payload: VoltageVariationsReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> VoltageVariationsResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    if instrument.indication_type is IndicationType.NON_SELF_INDICATING:
+        raise HTTPException(status_code=422, detail="Voltage variations applies only to electronic instruments")
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = voltage_variations_service.compute_result_for_submission(payload, instrument, verification_type)
+    except voltage_variations_service.UnknownLevelKey as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.VOLTAGE_VARIATIONS.value,
+            sequence_no=voltage_variations_service.level_index(payload.level_key),
+            data=payload.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.VOLTAGE_VARIATIONS.value,
+            reading_id=reading_row["id"],
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="voltage_variations_reading_submitted",
+            data={"level_key": payload.level_key, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Record-only electrical disturbance tests (clause 12.x) — AC mains voltage
+# dips (12.1), electrical bursts (12.2), electrostatic discharges (12.4).
+# No computation (see app/contracts/disturbance.py's module docstring): a
+# submission just validates its condition_key against that test's own
+# fixed, predefined list (app/services/disturbance.py) and stores the
+# technician's observation. The three route trios below share one
+# implementation each (`_get_disturbance_conditions`/`_list_disturbance_
+# readings`/`_submit_disturbance_reading`) rather than three near-identical
+# copies — only the registered path and the fixed `test_type` differ.
+# Surges (12.3), radiated EM (12.5), conducted RF (12.6), and road-vehicle
+# transients (12.7) are NOT built this task — see docs/architecture.md and
+# SESSION_LOG.md for what was deferred and why.
+# ---------------------------------------------------------------------------
+
+
+def _disturbance_conditions(test_type: str) -> list[DisturbanceConditionOut]:
+    return [DisturbanceConditionOut(**condition) for condition in disturbance_service.conditions_for(test_type)]
+
+
+def _list_disturbance_readings(client, session_id: str, test_type: str) -> list[DisturbanceReadingRecordOut]:
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=test_type)
+    result_rows = readings_repo.list_results(client, session_id=session_id, test_type=test_type)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+
+    latest_by_sequence_no = {
+        reading_row["sequence_no"]: (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in reading_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+
+    records = [disturbance_reading_and_result_to_record_out(r, res) for r, res in latest_by_sequence_no.values()]
+    records.sort(key=lambda record: disturbance_service.condition_index(test_type, record.condition_key))
+    return records
+
+
+def _submit_disturbance_reading(
+    session_id: str, test_type: str, action: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext
+) -> DisturbanceResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    if instrument.indication_type is IndicationType.NON_SELF_INDICATING:
+        raise HTTPException(status_code=422, detail="This test applies only to electronic instruments")
+
+    try:
+        sequence_no = disturbance_service.condition_index(test_type, payload.condition_key)
+    except disturbance_service.UnknownConditionKey as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # A "without disturbance" baseline row has no fault check on the form
+    # itself (its No/Yes cells are greyed out) — significant_fault is
+    # meaningless for it, so it's always trivially passed regardless of
+    # whatever the client sent.
+    condition = disturbance_service.condition_by_key(test_type, payload.condition_key)
+    significant_fault = payload.significant_fault if condition["has_fault_check"] else False
+    passed = not significant_fault
+    result_out = DisturbanceResultOut(
+        condition_key=payload.condition_key,
+        indication=payload.indication,
+        significant_fault=significant_fault,
+        remarks=payload.remarks,
+        passed=passed,
+    )
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=test_type,
+            sequence_no=sequence_no,
+            data=payload.model_dump(mode="json") | {"significant_fault": significant_fault},
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=test_type,
+            reading_id=reading_row["id"],
+            result=result_out.model_dump(mode="json"),
+            passed=passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action=action,
+            data={"condition_key": payload.condition_key, "significant_fault": significant_fault},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return result_out
+
+
+# --- 12.1 AC mains voltage dips and short interruptions --------------------
+
+
+@router.get("/{session_id}/ac-mains-dips/conditions", response_model=list[DisturbanceConditionOut])
+def get_ac_mains_dips_conditions(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.AC_MAINS_DIPS.value)
+
+
+@router.get("/{session_id}/ac-mains-dips/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_ac_mains_dips_readings(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.AC_MAINS_DIPS.value)
+
+
+@router.post("/{session_id}/ac-mains-dips/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_ac_mains_dips_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(session_id, TestType.AC_MAINS_DIPS.value, "ac_mains_dips_reading_submitted", payload, auth)
+
+
+# --- 12.2 Electrical bursts --------------------------------------------------
+
+
+@router.get("/{session_id}/electrical-bursts/conditions", response_model=list[DisturbanceConditionOut])
+def get_electrical_bursts_conditions(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.ELECTRICAL_BURSTS.value)
+
+
+@router.get("/{session_id}/electrical-bursts/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_electrical_bursts_readings(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.ELECTRICAL_BURSTS.value)
+
+
+@router.post("/{session_id}/electrical-bursts/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_electrical_bursts_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(session_id, TestType.ELECTRICAL_BURSTS.value, "electrical_bursts_reading_submitted", payload, auth)
+
+
+# --- 12.4 Electrostatic discharges ------------------------------------------
+
+
+@router.get("/{session_id}/electrostatic-discharges/conditions", response_model=list[DisturbanceConditionOut])
+def get_electrostatic_discharges_conditions(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.ELECTROSTATIC_DISCHARGES.value)
+
+
+@router.get("/{session_id}/electrostatic-discharges/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_electrostatic_discharges_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.ELECTROSTATIC_DISCHARGES.value)
+
+
+@router.post("/{session_id}/electrostatic-discharges/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_electrostatic_discharges_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(
+        session_id, TestType.ELECTROSTATIC_DISCHARGES.value, "electrostatic_discharges_reading_submitted", payload, auth
+    )
 
 
 # ---------------------------------------------------------------------------

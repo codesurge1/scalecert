@@ -746,3 +746,30 @@ Scope held: no new tests, engines, or endpoints — every un-built clause is a d
 - Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
 - Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+
+---
+
+### [2026-09-27] — feat: disturbance and voltage-variation test forms
+
+**Done.** Four new test-entry screens beyond the core OIML clause 8.3.3 seven: clause 11 (Voltage variations, A.5.4) and three clause-12.x electrical disturbance tests (12.1 AC mains voltage dips & short interruptions, 12.2 electrical bursts, 12.4 electrostatic discharges). Pages 23/24/25(+26)/29(+30) of R 76-2 were read as rendered images (`pdftoppm`) to match each form's exact table structure; pages 27/32/34/35 (surges, radiated EM, conducted RF, road-vehicle transients) were also read but those four tests were deliberately deferred — see below.
+
+**Two genuinely different shapes.** Voltage variations DOES compute: `app/services/voltage_variations.py` calls `engine.weighing.compute_weighing_result` directly at a fixed 10e load across three power-supply voltage levels (reference/lower/upper) — no new engine, same reuse precedent `zero_tare.py` set. The other three are RECORD-ONLY: OIML's own pass rule for every clause-12.x form is "check if a significant fault occurred" — a physical-bench judgment only a technician with EMC equipment can make, so there is no engine at all (`app/contracts/disturbance.py`'s module docstring has the full reasoning). Their API validates a submitted `condition_key` against that test's own fixed, predefined condition list (`app/services/disturbance.py`) and stores the technician's `indication`/`significant_fault`/`remarks` observation verbatim; `passed = not significant_fault`. All three share ONE router implementation and ONE frontend component (`DisturbanceFormTable.jsx` + `createDisturbanceSessionPage` factory) rather than three near-copies.
+
+**Schema:** `test_type` gained four new enum values (`voltage_variations`, `ac_mains_dips`, `electrical_bursts`, `electrostatic_discharges`) — additive only. `db/migrations/004_disturbance_test_types.sql` has the exact `ALTER TYPE ... ADD VALUE IF NOT EXISTS` statements — **must run against a live project before deploying this branch's backend code**, or the first insert of one of these types fails with a Postgres enum error. `db/schema.sql` updated for a fresh apply.
+
+**Wired end to end:** `testChecklist.js` gained four rows (N/A for non-self-indicating instruments — no electronics to power-vary or disturb); `summaryChecklist.js`'s clause-11/12.1/12.2/12.4 placeholders flipped from "Not implemented" to live, clickable rows on the page-9 summary; `SessionPage.jsx` fetches all four tests' readings and computes their progress via the same `computeProgress` shape every other test already used (fixed totals: 3/7/18/26, never instrument-dependent).
+
+**Prioritized and delivered as directed:** 11, 12.1, 12.2, 12.4 are fully built (contract, service, router with tests, frontend form, wired into both checklists). 12.3 (Surges), 12.5 (Radiated EM immunity), 12.6 (Conducted RF immunity), 12.7 (Road-vehicle transients) are NOT built — no contract, service, route, form, or enum value — and remain "Not implemented" on the summary exactly like every other unbuilt clause. Two documented simplifications: 12.2(b) I/O circuits fixed at 3 generic cable/interface slots (the real form has 9 blank ones); Voltage variations builds one power-supply category/table with one row per level (the real form has two near-identical tables and two blank rows per level).
+
+`npm run build` succeeds (2072 modules). Backend: 35 new tests (contract-level service tests + router tests with the DB layer mocked, same pattern as every other test here), full suite 631 passed (was 596). `docs/architecture.md` updated across four sections (Database schema, Engine design, Contracts, API surface — new "Record-only disturbance tests" subsection — and Frontend) in the same commit.
+
+**Next:** The real verdict is the preview, AFTER running the migration SQL against the live project: open a session, confirm Voltage variations/AC mains dips/Electrical bursts/Electrostatic discharges all appear live (not "Not implemented") on the page-9 summary and are clickable; submit a few readings on each and confirm Passed/Failed responds correctly (a significant-fault tick should flip a disturbance test to Failed; a baseline "without disturbance" row's fault-check should stay inert); confirm a non-self-indicating instrument shows all four as N/A; confirm the other 11 existing tests are completely unaffected.
+
+**Open questions:**
+- Surges/Radiated EM/Conducted RF/Road-vehicle transients (12.3/12.5/12.6/12.7) are the clear next slice if this area continues — same pattern, no new architecture needed (a condition list, an enum value migration, a `DisturbanceFormTable` call site).
+- 12.2(b)'s 3-fixed-slots simplification may need revisiting if a real verification genuinely has more than 3 I/O interfaces to test — the Remarks field is the documented workaround for now.
+- Whether Voltage variations' single-category/single-row-per-level simplification is acceptable to RRSL, or whether the second power-supply-category table needs building, is unconfirmed.
+- `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task.
+- Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).

@@ -76,6 +76,10 @@ export function SessionPage() {
   const [sensitivityChecks, setSensitivityChecks] = useState(undefined);
   const [sensitivityReadings, setSensitivityReadings] = useState(undefined);
   const [tiltingState, setTiltingState] = useState(undefined);
+  const [voltageVariationsReadings, setVoltageVariationsReadings] = useState(undefined);
+  const [acMainsDipsReadings, setAcMainsDipsReadings] = useState(undefined);
+  const [electricalBurstsReadings, setElectricalBurstsReadings] = useState(undefined);
+  const [electrostaticDischargesReadings, setElectrostaticDischargesReadings] = useState(undefined);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -100,6 +104,10 @@ export function SessionPage() {
           apiFetch(`/sessions/${id}/sensitivity/checks`),
           apiFetch(`/sessions/${id}/sensitivity/readings`),
           apiFetch(`/sessions/${id}/tilting/readings`),
+          apiFetch(`/sessions/${id}/voltage-variations/readings`),
+          apiFetch(`/sessions/${id}/ac-mains-dips/readings`),
+          apiFetch(`/sessions/${id}/electrical-bursts/readings`),
+          apiFetch(`/sessions/${id}/electrostatic-discharges/readings`),
         ]);
       })
       .then((results) => {
@@ -117,6 +125,10 @@ export function SessionPage() {
           sensitivityChecksData,
           sensitivityReadingsData,
           tiltingStateData,
+          voltageVariationsReadingsData,
+          acMainsDipsReadingsData,
+          electricalBurstsReadingsData,
+          electrostaticDischargesReadingsData,
         ] = results;
         setInstrument(instrumentData);
         setWeighingSequence(sequenceData);
@@ -130,6 +142,10 @@ export function SessionPage() {
         setSensitivityChecks(sensitivityChecksData);
         setSensitivityReadings(sensitivityReadingsData);
         setTiltingState(tiltingStateData);
+        setVoltageVariationsReadings(voltageVariationsReadingsData);
+        setAcMainsDipsReadings(acMainsDipsReadingsData);
+        setElectricalBurstsReadings(electricalBurstsReadingsData);
+        setElectrostaticDischargesReadings(electrostaticDischargesReadingsData);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -181,6 +197,35 @@ export function SessionPage() {
     return computeProgress(total, tiltingState.readings.length, tiltingState.passed === true);
   }, [tiltingState]);
 
+  // The four disturbance/voltage-variation tests each have a FIXED
+  // condition-list length (never instrument-dependent, unlike Sensitivity's
+  // checks) — same "hardcode the known total" convention Repeatability
+  // (20) and Tilting (15) already use, matching the counts
+  // app/services/disturbance.py's own condition lists produce.
+  const voltageVariationsProgress = useMemo(() => {
+    const total = voltageVariationsReadings ? 3 : undefined; // reference/lower/upper
+    return computeProgress(total, voltageVariationsReadings?.length ?? 0, voltageVariationsReadings?.every((r) => r.passed));
+  }, [voltageVariationsReadings]);
+
+  const acMainsDipsProgress = useMemo(() => {
+    const total = acMainsDipsReadings ? 7 : undefined; // baseline + 6 conditions
+    return computeProgress(total, acMainsDipsReadings?.length ?? 0, acMainsDipsReadings?.every((r) => r.passed));
+  }, [acMainsDipsReadings]);
+
+  const electricalBurstsProgress = useMemo(() => {
+    const total = electricalBurstsReadings ? 18 : undefined; // 9 (a) + 9 (b, 3 slots)
+    return computeProgress(total, electricalBurstsReadings?.length ?? 0, electricalBurstsReadings?.every((r) => r.passed));
+  }, [electricalBurstsReadings]);
+
+  const electrostaticDischargesProgress = useMemo(() => {
+    const total = electrostaticDischargesReadings ? 26 : undefined; // 10 (a) + 16 (b, 2 planes)
+    return computeProgress(
+      total,
+      electrostaticDischargesReadings?.length ?? 0,
+      electrostaticDischargesReadings?.every((r) => r.passed),
+    );
+  }, [electrostaticDischargesReadings]);
+
   const PROGRESS_BY_KEY = {
     weighing: weighingProgress,
     zero_tare: zeroTareProgress,
@@ -189,6 +234,10 @@ export function SessionPage() {
     discrimination: discriminationProgress,
     sensitivity: sensitivityProgress,
     tilting: tiltingProgress,
+    voltage_variations: voltageVariationsProgress,
+    ac_mains_dips: acMainsDipsProgress,
+    electrical_bursts: electricalBurstsProgress,
+    electrostatic_discharges: electrostaticDischargesProgress,
   };
 
   // Submit-for-review is only meaningfully offered once at least one test

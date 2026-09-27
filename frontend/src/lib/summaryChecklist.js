@@ -67,14 +67,17 @@ export const SUMMARY_ROWS = [
   { number: "8", label: "Tilting", testKey: "tilting" },
   { number: "9", label: "Tare", placeholder: true },
   { number: "10", label: "Warm-up time", placeholder: true },
-  { number: "11", label: "Voltage variations", placeholder: true },
-  { number: "12.1", label: "AC mains voltage dips and short interruptions", placeholder: true },
+  { number: "11", label: "Voltage variations", testKey: "voltage_variations" },
+  { number: "12.1", label: "AC mains voltage dips and short interruptions", testKey: "ac_mains_dips" },
   {
     number: "12.2",
     label: "Electrical bursts",
+    // Both sub-rows open the SAME test/route — this app builds 12.2 as one
+    // combined form covering both (a) and (b) (app/services/disturbance.py),
+    // not two separately-routed tests, so both page-9 lines point at it.
     subRows: [
-      { label: "a) Mains power supply lines", placeholder: true },
-      { label: "b) I/O circuits and communication lines", placeholder: true },
+      { label: "a) Mains power supply lines", testKey: "electrical_bursts" },
+      { label: "b) I/O circuits and communication lines", testKey: "electrical_bursts" },
     ],
   },
   {
@@ -88,9 +91,10 @@ export const SUMMARY_ROWS = [
   {
     number: "12.4",
     label: "Electrostatic discharges",
+    // Same reasoning as 12.2 above — one combined form for (a) and (b).
     subRows: [
-      { label: "a) Direct application", placeholder: true },
-      { label: "b) Indirect application (contact discharges only)", placeholder: true },
+      { label: "a) Direct application", testKey: "electrostatic_discharges" },
+      { label: "b) Indirect application (contact discharges only)", testKey: "electrostatic_discharges" },
     ],
   },
   { number: "12.5", label: "Immunity to radiated electromagnetic fields", placeholder: true },
