@@ -64,3 +64,40 @@ This is the one change NOT made in this task (scope was `frontend/vercel.json` +
 **Also flagged, not acted on:** it's unclear whether the root catch-all's `path: "/index.html"` override (untouched by this task) does anything at all — it demonstrably did not produce SPA fallback in attempt 1's real deploy, yet real static assets kept loading throughout, which is only consistent with it being a no-op for this purpose. Neither working real-world example above uses a `path` key. Recommend dropping it once a working fallback is confirmed by deploy — not changed here.
 
 **Prevention:** Two outages from the same underlying root cause (guessing at a destination shape instead of confirming one) — the general lesson from UPDATE above (trust a primary source over an inference) held, but this time there was no primary source available AT ALL, only conflicting third-party signals. The check order for the next deploy, in every case: `/` loads first (would have caught attempt 2 immediately), then `/api/health` returns JSON, then `/instruments` loads styled (real JS/CSS, not bare HTML), then `/verify/<cert>`. Checking `/` first is the cheapest possible smoke test and would have caught attempt 2's outage in seconds rather than needing a full page verification — add this ordering to any future SPA-routing change's rollout checklist.
+
+---
+
+### [2026-09-27] UPDATE 3 — attempt 3 (`frontend/vercel.json`) deployed and STILL 404'd on deep links; switched to the mechanism proven by real-world Vercel Services deployments
+
+**Symptom:** After attempt 3 shipped (a standalone `frontend/vercel.json` scoping the SPA rewrite to the frontend service's own root — see UPDATE 2), `https://scalecert-alpha.vercel.app/instruments` still returned a 404 on a fresh direct load. Confirmed by the user directly hitting the URL post-deploy.
+
+**Root cause:** The per-service-`vercel.json`-file mechanism attempt 3 bet on was explicitly flagged as unconfirmed when it shipped (see UPDATE 2's "NOT confirmed from a primary source" section) — Vercel evidently does not read/merge a `frontend/vercel.json` into a `services`-model deploy the way a standalone single-project deploy would. The file was silently ignored; the frontend service kept whatever the top-level rewrite handed it, same as attempt 1.
+
+**Fix:** Removed `frontend/vercel.json` entirely. Moved the SPA rewrite to the mechanism UPDATE 2 had already identified, from real evidence, as more likely correct: a `rewrites` array nested as a property **inside `services.frontend`** in the root `vercel.json`, alongside its existing `root`/`framework` keys — not a separate file, and not a `path` override on the top-level catch-all (which is reverted to the bare `{"service": "frontend"}` form; the `path` key never demonstrably did anything across three attempts and is dropped). Full root `vercel.json` after this fix:
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["bom1"],
+  "services": {
+    "frontend": {
+      "root": "frontend/",
+      "framework": "vite",
+      "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+    },
+    "backend": {
+      "root": "backend/",
+      "entrypoint": "main:app",
+      "installCommand": "cp -r ../engine ./engine && pip install -r requirements.txt"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": { "service": "backend" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
+}
+```
+This exact shape — rewrite nested in the service block, no `path` override at the top level — matches two independent real projects that hit and fixed this identical bug: [MACantara/Phalanx-Cyber-Academy#465](https://github.com/MACantara/Phalanx-Cyber-Academy/pull/465) (merged) and VictorBravo9er/Teacher-Assistant-Workspace#18/#19 (both found via web search in the prior task, re-used here since this is exactly the alternative UPDATE 2 already flagged).
+
+**Still not confirmed from Vercel's own primary docs** — `vercel.com`/`openapi.vercel.sh` remain egress-blocked. This is the best-evidenced option available (two independent real, working deployments using this exact shape), not a certainty. The deploy is still the test.
+
+**Prevention:** Four attempts, one outage, to fix one rewrite — the actual lesson is that this project's specific combination (Vercel `services` config + Vite + SPA client-side routing) has no confirmable primary-source answer available from this sandbox, only real-world precedent. Future changes to this rewrite should be validated against a real deploy immediately (check order: `/`, then `/api/health`, then `/instruments` styled, then `/verify/<cert>`) rather than reasoned about further in the abstract — the next failure signal is itself useful data, not a reason to keep guessing at new destination shapes without a stronger source.

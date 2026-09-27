@@ -543,3 +543,24 @@ This task's fix: a new `frontend/vercel.json` (`{"rewrites": [{"source": "/(.*)"
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — fix: nest SPA fallback in services.frontend (attempt 4, after attempt 3 also failed on deploy)
+
+**Done.** The user confirmed post-deploy that attempt 3's `frontend/vercel.json` did NOT fix it — `/instruments` still 404'd. That per-service-file mechanism was flagged unconfirmed when it shipped, and evidently Vercel doesn't read it under the `services` config model.
+
+Switched to the mechanism `docs/errors/ERROR_LOG.md`'s previous entry had already identified as better-evidenced: a `rewrites` array nested directly inside `services.frontend` in the ROOT `vercel.json`, plus dropping the root catch-all's `path` override (never confirmed to do anything across three attempts) back to the bare `{"service": "frontend"}` form. Deleted `frontend/vercel.json` — superseded. Full root config now matches, property-for-property, two independent real Vercel Services + Vite projects that hit and fixed this identical bug: MACantara/Phalanx-Cyber-Academy#465 (merged) and VictorBravo9er/Teacher-Assistant-Workspace#18/#19.
+
+Still not confirmed from Vercel's own primary docs (egress-blocked). This is the best-evidenced option found across four attempts, not a certainty — the deploy is still the test. `npm run build` and full pytest suite both re-run and green (config-only change, no app code touched).
+
+**Next:** Deploy and check, in order: `/` loads, `/api/health` returns JSON, `/instruments` loads styled (real JS/CSS), `/verify/<cert>` loads. If this STILL fails, there is no further well-evidenced third-party precedent left to try from this sandbox — the next step would be getting primary Vercel docs access (egress unblocked) or Vercel support directly, not another guess.
+
+**Open questions:**
+- Whether this nested-rewrite mechanism actually works under Vercel's `services` model — best real-world evidence available, still unconfirmed from primary docs; if it also fails, escalate rather than guess a fifth shape.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
