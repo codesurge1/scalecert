@@ -28,6 +28,21 @@ Sourced anchors (mandatory, always present when applicable):
     BAND_TABLE (the same table lookup_mpe uses) — never a second, hardcoded
     copy of the band edges.
 
+RRSL "10e start" anchor (mandatory, but NOT OIML-sourced): the load run
+starts at ten verification scale intervals — 10 * e — matching the RRSL lab
+convention of never applying the very first test load below that point.
+Tagged LoadKind.TEN_E, distinct from the sourced anchors above and from a
+FILL point, so it's never mistaken for either downstream. Added whenever
+10e <= Max; skipped entirely for a tiny-range instrument where even 10e
+would exceed Max (there is no room for it below the top of the range).
+When 10e happens to land exactly on an already-claimed anchor value (most
+commonly Min, when Min == 10e for that instrument), the existing dedupe
+keeps the earlier, OIML-sourced anchor rather than adding a second entry at
+the same load — sourced anchors take precedence over this convention on a
+tie. Counts toward MIN_VERIFICATION_LOAD_COUNT like every other anchor, so
+adding it reduces the number of Band-1 fills needed by one (or zero, on a
+dedupe/skip) rather than growing the sequence past the target.
+
 OPEN ITEM — Band-1 fill spacing (docs/plan.md "Open questions"): OIML does
 not prescribe how many additional loads, or where, to place strictly inside
 Band 1 (below the first in-range band transition, or below Max if the whole
@@ -69,6 +84,10 @@ MIN_VERIFICATION_LOAD_COUNT = 10
 
 # A.4.4.1: Min is a mandatory anchor only at or above 100 mg (0.1 g).
 MIN_CAPACITY_THRESHOLD_GRAMS = Decimal("0.1")
+
+# RRSL lab convention (see module docstring) — not OIML-sourced: the load
+# run's first (lowest) load is ten verification scale intervals, 10 * e.
+TEN_E_START_MULTIPLE = Decimal("10")
 
 # PLACEHOLDER pending RRSL confirmation (see module docstring) — not OIML-sourced.
 # Changing the fill convention later should mean changing this label and the
@@ -258,6 +277,14 @@ def generate_load_sequence(
     _add_anchor(max_capacity, LoadKind.MAX)
     if effective_min is not None:
         _add_anchor(effective_min, LoadKind.MIN)
+    # RRSL "10e start" convention (see module docstring) — not OIML-sourced.
+    # Skipped for a tiny-range instrument where even 10e would exceed Max;
+    # deduped (via seen_L, same as every other anchor) if it lands exactly
+    # on an already-claimed load — Min wins that tie, since it's added
+    # first and is the OIML-sourced value.
+    ten_e = TEN_E_START_MULTIPLE * e
+    if ten_e <= max_capacity:
+        _add_anchor(ten_e, LoadKind.TEN_E)
     for upper_m in _band_transition_loads_m(accuracy_class):
         L = upper_m * e
         if lower_bound <= L <= max_capacity:
