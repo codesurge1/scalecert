@@ -23,7 +23,7 @@ ScaleCert digitizes OIML R76 verification/certification for Non-Automatic Weighi
 - Never trust the engine on a single example. No calculated verdict is trusted until the boundary-value test table passes (every MPE band edge from both sides, Max, Min, both directions, initial and in-service-doubled).
 - Database access uses the connection pooler (Supavisor, transaction mode), never the direct connection — required on serverless.
 - Generated PDFs go to Supabase Storage, never local disk (serverless filesystem is ephemeral).
-- Certificate format is SC-{YEAR}-{6-digit sequential}, assigned at approval time via a Postgres sequence — never before approval.
+- Certificate format is SC-{YEAR}-{6-digit sequential}, assigned at issue time (never before, and always after approval) via a Postgres sequence.
 - Weighing load sequence is auto-generated; the technician enters only Indication (I) and additional load (ΔL), never the applied load L.
 - Secrets never enter git. .env* is gitignored; only .env.example (blank values) is committed.
 - Separation of duties: no one both produces and approves the same result. Enforce at the database (RLS) AND the API layer (defense in depth).

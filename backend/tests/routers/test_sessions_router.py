@@ -7,9 +7,16 @@ untested path — POST /sessions (create_session): the happy path, malformed
 instrument_id -> 422, instrument not found -> 404, and that a
 RepositoryError from either insert step maps to a clean, informative 403/500
 rather than the bare IndexError-triggered 500 this task fixes.
+
+Also covers the lifecycle-transition routes (submit/reopen/return/approve/
+issue) added this task: the separation-of-duties rejection (an approver
+acting on a session THEY created -> a clean 403, mocking the exact
+42501/RepositoryError path a real RLS rejection would take), out-of-order
+transitions -> 409, and certificate-number assignment at issue.
 """
 
 import app.repositories.instruments as instruments_repo
+import app.repositories.profiles as profiles_repo
 import app.repositories.readings as readings_repo
 import app.repositories.sessions as sessions_repo
 from app.deps import AuthContext, get_auth_context
@@ -20,6 +27,7 @@ from fastapi.testclient import TestClient
 client = TestClient(app)
 
 _FAKE_AUTH = AuthContext(client=object(), user_id="11111111-1111-1111-1111-111111111111", token="tok")
+_OTHER_USER_ID = "22222222-2222-2222-2222-222222222222"
 _INSTRUMENT_ID = "11111111-1111-4111-8111-111111111111"
 
 _INSTRUMENT_ROW = {
@@ -438,3 +446,383 @@ def test_submit_reading_succeeds_even_if_audit_log_fails(monkeypatch):
 
     resp = client.post("/api/sessions/sess-1/weighing/readings", json=_VALID_READING_BODY)
     assert resp.status_code == 201  # audit failure must not fail the request
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle transitions — submit -> approve/return -> issue, with separation
+# of duties. `_FAKE_AUTH.user_id` is always the caller; a session's
+# `created_by` decides whether the caller is "the creator" (submit/reopen)
+# or "someone else" (return/approve/issue must reject the creator).
+# ---------------------------------------------------------------------------
+
+
+def _mock_session_plumbing(monkeypatch, *, updated_row=None, selections=None, role=None):
+    """Shared plumbing every lifecycle test needs: the session-selections
+    lookup every response-building call makes, and (when relevant) the
+    caller's own role and the row update_session should return."""
+    monkeypatch.setattr(sessions_repo, "get_session_test_selections", lambda client, session_id: selections or [])
+    if updated_row is not None:
+        monkeypatch.setattr(sessions_repo, "update_session", lambda client, session_id, patch: dict(updated_row, **patch))
+    if role is not None:
+        monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: role)
+
+
+# --- submit -----------------------------------------------------------------
+
+
+def test_submit_happy_path(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW))
+    monkeypatch.setattr(readings_repo, "has_any_reading", lambda client, session_id: True)
+    audit_calls = []
+    monkeypatch.setattr(
+        readings_repo, "insert_audit_log", lambda client, **kwargs: audit_calls.append(kwargs)
+    )
+    _mock_session_plumbing(monkeypatch, updated_row=dict(_DRAFT_SESSION_ROW, status="submitted"))
+
+    resp = client.post("/api/sessions/sess-1/submit")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "submitted"
+    assert audit_calls[0]["action"] == "submitted"
+
+
+def test_submit_rejects_when_not_the_creator(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, created_by=_OTHER_USER_ID)
+    )
+    resp = client.post("/api/sessions/sess-1/submit")
+    assert resp.status_code == 403
+
+
+def test_submit_rejects_when_not_draft(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted"))
+    resp = client.post("/api/sessions/sess-1/submit")
+    assert resp.status_code == 409
+
+
+def test_submit_rejects_when_session_has_no_readings(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW))
+    monkeypatch.setattr(readings_repo, "has_any_reading", lambda client, session_id: False)
+    resp = client.post("/api/sessions/sess-1/submit")
+    assert resp.status_code == 409
+    assert "no test has recorded" in resp.json()["detail"]
+
+
+def test_submit_maps_likely_rls_repository_error_to_403(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW))
+    monkeypatch.setattr(readings_repo, "has_any_reading", lambda client, session_id: True)
+
+    def failing_update(client, session_id, patch):
+        raise RepositoryError(table="test_sessions", operation="update", hint="RLS rejected it", likely_rls=True)
+
+    monkeypatch.setattr(sessions_repo, "update_session", failing_update)
+    resp = client.post("/api/sessions/sess-1/submit")
+    assert resp.status_code == 403
+
+
+# --- reopen ------------------------------------------------------------------
+
+
+def test_reopen_happy_path(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="returned"))
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    _mock_session_plumbing(monkeypatch, updated_row=dict(_DRAFT_SESSION_ROW, status="draft"))
+
+    resp = client.post("/api/sessions/sess-1/reopen")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "draft"
+
+
+def test_reopen_rejects_when_not_returned(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="draft"))
+    resp = client.post("/api/sessions/sess-1/reopen")
+    assert resp.status_code == 409
+
+
+def test_reopen_rejects_when_not_the_creator(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="returned", created_by=_OTHER_USER_ID),
+    )
+    resp = client.post("/api/sessions/sess-1/reopen")
+    assert resp.status_code == 403
+
+
+# --- return ------------------------------------------------------------------
+
+
+def test_return_happy_path(monkeypatch):
+    # created_by is _OTHER_USER_ID: the caller (_FAKE_AUTH) is an approver
+    # acting on a session THEY DID NOT CREATE — the normal, allowed case.
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    audit_calls = []
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: audit_calls.append(kwargs))
+    monkeypatch.setattr(sessions_repo, "get_latest_return_reason", lambda client, session_id: "Please re-check load #4")
+    _mock_session_plumbing(
+        monkeypatch, role="approver", updated_row=dict(_DRAFT_SESSION_ROW, status="returned", created_by=_OTHER_USER_ID)
+    )
+
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": "Please re-check load #4"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "returned"
+    assert body["return_reason"] == "Please re-check load #4"
+    assert audit_calls[0]["action"] == "returned"
+    assert audit_calls[0]["data"]["reason"] == "Please re-check load #4"
+
+
+def test_return_rejects_empty_reason(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": ""})
+    assert resp.status_code == 422
+
+
+def test_return_rejects_own_session_separation_of_duties(monkeypatch):
+    # created_by == _FAKE_AUTH.user_id: the approver created this session
+    # themselves — the exact separation-of-duties violation RLS's
+    # `created_by <> auth.uid()` clause rejects at the DB (42501); here it's
+    # caught at the API layer first, before any DB write is attempted.
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted"))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": "not allowed"})
+    assert resp.status_code == 403
+    assert "separation of duties" in resp.json()["detail"]
+
+
+def test_return_rejects_when_caller_is_not_an_approver(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": "not allowed"})
+    assert resp.status_code == 403
+
+
+def test_return_rejects_when_not_submitted(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="draft", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": "not allowed"})
+    assert resp.status_code == 409
+
+
+def test_return_fails_cleanly_when_audit_write_fails_and_does_not_change_status(monkeypatch):
+    # The one deliberately NON-non-fatal audit write in this app (the
+    # return reason has nowhere else to live) — a failure here must surface
+    # as an error, and update_session must never be called at all.
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+
+    def failing_audit(client, **kwargs):
+        raise RuntimeError("simulated audit failure")
+
+    monkeypatch.setattr(readings_repo, "insert_audit_log", failing_audit)
+
+    update_calls = []
+    monkeypatch.setattr(sessions_repo, "update_session", lambda client, session_id, patch: update_calls.append(patch))
+
+    resp = client.post("/api/sessions/sess-1/return", json={"reason": "network blip"})
+    assert resp.status_code == 500
+    assert update_calls == []  # the session's status must be untouched
+
+
+# --- approve -----------------------------------------------------------------
+
+
+def test_approve_happy_path(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    _mock_session_plumbing(
+        monkeypatch,
+        role="approver",
+        updated_row=dict(_DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by=_FAKE_AUTH.user_id),
+    )
+
+    resp = client.post("/api/sessions/sess-1/approve")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "approved"
+    assert body["approved_by"] == _FAKE_AUTH.user_id
+
+
+def test_approve_rejects_own_session_separation_of_duties(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted"))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/approve")
+    assert resp.status_code == 403
+    assert "separation of duties" in resp.json()["detail"]
+
+
+def test_approve_rejects_technician(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    resp = client.post("/api/sessions/sess-1/approve")
+    assert resp.status_code == 403
+
+
+def test_approve_rejects_out_of_order_from_draft(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="draft", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/approve")
+    assert resp.status_code == 409
+
+
+def test_approve_admin_may_approve_anyones_session(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    _mock_session_plumbing(
+        monkeypatch,
+        role="admin",
+        updated_row=dict(_DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by=_FAKE_AUTH.user_id),
+    )
+    resp = client.post("/api/sessions/sess-1/approve")
+    assert resp.status_code == 200
+
+
+# --- issue -------------------------------------------------------------------
+
+
+def test_issue_happy_path_assigns_certificate_number(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(
+            _DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by=_FAKE_AUTH.user_id
+        ),
+    )
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    monkeypatch.setattr(sessions_repo, "issue_certificate_number", lambda client: "SC-2026-000001")
+    _mock_session_plumbing(
+        monkeypatch,
+        role="approver",
+        updated_row=dict(
+            _DRAFT_SESSION_ROW,
+            status="issued",
+            created_by=_OTHER_USER_ID,
+            approved_by=_FAKE_AUTH.user_id,
+            certificate_number="SC-2026-000001",
+        ),
+    )
+
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "issued"
+    assert body["certificate_number"] == "SC-2026-000001"
+
+
+def test_issue_rejects_a_different_approver_than_the_one_who_approved(monkeypatch):
+    # approved_by is a THIRD user — neither the caller nor _OTHER_USER_ID —
+    # so the caller (an approver, but not the one who approved) may not issue.
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(
+            _DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by="33333333-3333-3333-3333-333333333333"
+        ),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 403
+
+
+def test_issue_rejects_own_session_separation_of_duties(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="approved", approved_by=_FAKE_AUTH.user_id),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 403
+    assert "separation of duties" in resp.json()["detail"]
+
+
+def test_issue_rejects_out_of_order_from_submitted(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_DRAFT_SESSION_ROW, status="submitted", created_by=_OTHER_USER_ID),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 409
+
+
+def test_issue_admin_may_issue_regardless_of_who_approved(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(
+            _DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by="33333333-3333-3333-3333-333333333333"
+        ),
+    )
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    monkeypatch.setattr(sessions_repo, "issue_certificate_number", lambda client: "SC-2026-000002")
+    _mock_session_plumbing(
+        monkeypatch,
+        role="admin",
+        updated_row=dict(
+            _DRAFT_SESSION_ROW,
+            status="issued",
+            created_by=_OTHER_USER_ID,
+            certificate_number="SC-2026-000002",
+        ),
+    )
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 200
+    assert resp.json()["certificate_number"] == "SC-2026-000002"
+
+
+def test_issue_maps_likely_rls_repository_error_from_certificate_rpc_to_403(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(
+            _DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by=_FAKE_AUTH.user_id
+        ),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+
+    def failing_rpc(client):
+        raise RepositoryError(
+            table="certificate_number_seq", operation="rpc", hint="only an approver or admin may do this", likely_rls=True
+        )
+
+    monkeypatch.setattr(sessions_repo, "issue_certificate_number", failing_rpc)
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 403

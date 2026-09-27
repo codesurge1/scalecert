@@ -4,7 +4,7 @@ resource contract, not a test_type contract — see app/contracts/__init__.py).
 
 from typing import Optional
 
-from pydantic import UUID4, BaseModel, ConfigDict
+from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 from app.contracts.common import SessionStatus, TestType
 from engine.types import VerificationType
@@ -22,6 +22,18 @@ class SessionIn(BaseModel):
     # `instruments.id` is `gen_random_uuid()` (pgcrypto), always a v4 UUID.
     instrument_id: UUID4
     verification_type: VerificationType
+
+
+class SessionReturnIn(BaseModel):
+    """What an approver submits to `POST /sessions/{id}/return`. `reason` is
+    required and non-empty — a return with no explanation would leave the
+    technician with nothing to act on, so this is enforced here (a clean
+    422) rather than left to the DB (which has no dedicated column for it
+    at all — see app/repositories/sessions.get_latest_return_reason)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class SessionTestSelectionOut(BaseModel):
@@ -45,6 +57,19 @@ class SessionOut(BaseModel):
     status: SessionStatus
     created_by: str
     created_at: str
+    # Lifecycle trail (this task) — all None until the corresponding
+    # transition happens. Timestamps are plain strings, same convention as
+    # `created_at` above (never parsed into a datetime here).
+    submitted_at: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    issued_at: Optional[str] = None
+    certificate_number: Optional[str] = None
+    # NOT a `test_sessions` column — derived from the latest `action='returned'`
+    # audit_log row for this session (see
+    # app.repositories.sessions.get_latest_return_reason); populated by the
+    # caller only when it's actually relevant (status == 'returned').
+    return_reason: Optional[str] = None
     test_selections: list[SessionTestSelectionOut] = []
 
 
@@ -58,7 +83,9 @@ def session_insert_payload(created_by: str, payload: SessionIn) -> dict:
     return data
 
 
-def session_out_from_rows(session_row: dict, selection_rows: list[dict]) -> SessionOut:
+def session_out_from_rows(
+    session_row: dict, selection_rows: list[dict], *, return_reason: Optional[str] = None
+) -> SessionOut:
     return SessionOut(
         id=session_row["id"],
         instrument_id=session_row["instrument_id"],
@@ -66,5 +93,11 @@ def session_out_from_rows(session_row: dict, selection_rows: list[dict]) -> Sess
         status=session_row["status"],
         created_by=session_row["created_by"],
         created_at=session_row["created_at"],
+        submitted_at=session_row.get("submitted_at"),
+        approved_by=session_row.get("approved_by"),
+        approved_at=session_row.get("approved_at"),
+        issued_at=session_row.get("issued_at"),
+        certificate_number=session_row.get("certificate_number"),
+        return_reason=return_reason,
         test_selections=[SessionTestSelectionOut(**row) for row in selection_rows],
     )

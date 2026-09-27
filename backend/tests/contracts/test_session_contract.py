@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.contracts.common import SessionStatus, TestType
-from app.contracts.session import SessionIn, session_insert_payload, session_out_from_rows
+from app.contracts.session import SessionIn, SessionReturnIn, session_insert_payload, session_out_from_rows
 
 _INSTRUMENT_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -63,3 +63,58 @@ def test_session_out_from_rows_includes_test_selections():
     assert out.status is SessionStatus.DRAFT
     assert len(out.test_selections) == 1
     assert out.test_selections[0].test_type is TestType.WEIGHING
+    # Lifecycle fields all default to None when the row has none of them
+    # (this fixture predates the lifecycle columns being populated) —
+    # .get() in session_out_from_rows, never a bare KeyError.
+    assert out.submitted_at is None
+    assert out.approved_by is None
+    assert out.certificate_number is None
+    assert out.return_reason is None
+
+
+def test_session_out_from_rows_carries_the_lifecycle_trail():
+    session_row = dict(
+        id="sess-1",
+        instrument_id="instr-1",
+        verification_type="initial",
+        status="issued",
+        created_by="user-123",
+        created_at="2026-01-01T00:00:00Z",
+        submitted_at="2026-01-02T00:00:00Z",
+        approved_by="user-approver",
+        approved_at="2026-01-03T00:00:00Z",
+        issued_at="2026-01-04T00:00:00Z",
+        certificate_number="SC-2026-000001",
+    )
+    out = session_out_from_rows(session_row, [])
+    assert out.status is SessionStatus.ISSUED
+    assert out.submitted_at == "2026-01-02T00:00:00Z"
+    assert out.approved_by == "user-approver"
+    assert out.approved_at == "2026-01-03T00:00:00Z"
+    assert out.issued_at == "2026-01-04T00:00:00Z"
+    assert out.certificate_number == "SC-2026-000001"
+
+
+def test_session_out_from_rows_accepts_an_explicit_return_reason():
+    # return_reason is NOT a test_sessions column — the caller (the router)
+    # passes it in explicitly, derived from audit_log.
+    session_row = dict(
+        id="sess-1",
+        instrument_id="instr-1",
+        verification_type="initial",
+        status="returned",
+        created_by="user-123",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    out = session_out_from_rows(session_row, [], return_reason="missing environmental conditions")
+    assert out.return_reason == "missing environmental conditions"
+
+
+def test_session_return_in_requires_a_non_empty_reason():
+    with pytest.raises(ValidationError):
+        SessionReturnIn(reason="")
+
+
+def test_session_return_in_accepts_a_reason():
+    payload = SessionReturnIn(reason="Please re-check load #4")
+    assert payload.reason == "Please re-check load #4"
