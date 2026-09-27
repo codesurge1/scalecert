@@ -650,3 +650,32 @@ Weighing-specific (per task scope — only Weighing has the guided panel): the t
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — fix: guided entry follows real loading sequence (up pass, then down pass)
+
+**Done.** Three fixes to the Weighing guided panel — one real domain bug, one precision fix, one responsiveness pass. No computation, submission, or amend-with-audit behavior changed anywhere.
+
+**The domain bug (most important):** the panel walked `load1↓, load1↑, load2↓, load2↑, …` — physically wrong, since that implies adding and removing weights at every single load. OIML R76-1 A.4.4.1: apply loads up to Max, THEN remove them back down. New shared `buildGuidedWalkPositions` (`formColumns.js`, moved out of `GuidedEntryPanel.jsx` so the panel's walk and `WeighingFormTable.jsx`'s reload-resume logic can't drift apart) produces the full increasing pass first (every load ascending), then the full decreasing pass in reverse (every load descending) — for 10 loads, `load1↓…load10↓, load10↑…load1↑`, verified directly with a scratch script before trusting it in the UI. Previous/Next now walk this exact same corrected path. Progress line now says "Increasing pass · Load 5 of 10" / "Decreasing pass · Load 10 of 10" so the technician always knows which physical direction they're in.
+
+**Cell-level highlight:** the row-only highlight was too coarse. `inputCell` now checks the full cursor match (load AND direction AND field) and highlights that one `<td>` strongly (amber + ring), tracking the I→ΔL sub-step. The row keeps a subtler tint for at-a-glance orientation — two levels, not one blunt one.
+
+**Responsiveness — found and fixed three real issues below `lg`:** (1) missing unconditional `min-w-0` on both grid items meant the table's `min-w-[720px]` could force the page wider than the viewport instead of staying inside its own horizontal scroll; (2) the panel stacked below the (potentially long) table, so a tablet user had to scroll past the whole table to reach it — now `order-1` puts it first when stacked; (3) the panel had no width cap below `lg`, stretching edge-to-edge on tablet widths — capped at `max-w-xl`. Also made the "Fine (grams)" button grid responsive (it was hardcoded 6-across; "Scale divisions" already wasn't) and added a drop-shadow to the sticky Load column so it visually reads as pinned rather than glitchy.
+
+`npm run build` succeeds (`2063 modules transformed`, `✓ built in ~1.2s`); `npm run lint` shows zero new warnings in any changed file. Full pytest suite unaffected — frontend-only task, 596 passed.
+
+**Next:** The real verdict is the preview. Complete a full 10-load Weighing run using only the panel and confirm the 20-field order matches exactly: load1↓ through load10↓, then load10↑ back down to load1↑ (40 flat I/ΔL stops total). Confirm Previous walks backward along that same path. Confirm the exact active cell (not just the row) is unmistakable, including across the I→ΔL switch. Resize to tablet and phone widths: confirm no horizontal page overflow, the panel appears above the table when stacked, and it doesn't stretch uncomfortably wide on a tablet.
+
+**Open questions:**
+- The active-row highlight and sticky-Load-column treatments are Weighing-only (the only test with the guided panel and the widened table) — whether the other six ever need them depends on whether they get their own guided panels later.
+- The guided-panel pattern (shared readings hook + cursor-driven panel) is still Weighing-only — extending it to the other six tests is a later task, not attempted here.
+- `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task.
+- Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
+- Whether this nested-rewrite mechanism actually works under Vercel's `services` model — best real-world evidence available, still unconfirmed from primary docs; if it also fails, escalate rather than guess a fifth shape.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
