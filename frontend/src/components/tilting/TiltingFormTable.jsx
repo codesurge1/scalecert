@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormBox, FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
   { value: "non_existent", label: "Non-existent" },
@@ -92,8 +93,8 @@ export function TiltingFormTable({ sessionId, sessionStatus, instrument, initial
 
   function phaseLoadLabel(phaseKey) {
     if (phaseKey === "unloaded") return "0";
-    if (phaseKey === "loaded_l") return fmt(state.L);
-    return fmt(state.max_capacity);
+    if (phaseKey === "loaded_l") return roundLoadForDisplay(state.L);
+    return roundLoadForDisplay(state.max_capacity);
   }
 
   function phaseTable(phase) {
@@ -178,7 +179,7 @@ export function TiltingFormTable({ sessionId, sessionStatus, instrument, initial
                   const result = resultFor(phase.key, p);
                   return (
                     <td key={p} className="border border-neutral-900 px-2 py-1 text-center text-neutral-700">
-                      {cell.submitting ? "…" : fmt(result?.E)}
+                      {cell.submitting ? "…" : roundForDisplay(result?.E)}
                     </td>
                   );
                 })}
@@ -193,7 +194,7 @@ export function TiltingFormTable({ sessionId, sessionStatus, instrument, initial
                     const result = resultFor(phase.key, p);
                     return (
                       <td key={p} className="border border-neutral-900 px-2 py-1 text-center font-medium text-neutral-900">
-                        {fmt(result?.Ec)}
+                        {roundForDisplay(result?.Ec)}
                       </td>
                     );
                   })}
@@ -205,15 +206,15 @@ export function TiltingFormTable({ sessionId, sessionStatus, instrument, initial
         <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-xs">
           {phase.key === "unloaded" ? (
             <>
-              <FormBox label="2e" value={fmt(state.unloaded_limit)} width="w-20" />
-              <FormBox label="|E1,0 − Ev,0|max" value={fmt(state.unloaded_max_abs_deviation)} width="w-20" />
+              <FormBox label="2e" value={roundForDisplay(state.unloaded_limit)} width="w-20" />
+              <FormBox label="|E1,0 − Ev,0|max" value={roundForDisplay(state.unloaded_max_abs_deviation)} width="w-20" />
             </>
           ) : (
             <>
-              <FormBox label="mpe" value={fmt(phase.key === "loaded_l" ? state.mpe_l : state.mpe_max)} width="w-20" />
+              <FormBox label="mpe" value={roundForDisplay(phase.key === "loaded_l" ? state.mpe_l : state.mpe_max)} width="w-20" />
               <FormBox
                 label="|Ec1 − Ecv|max"
-                value={fmt(phase.key === "loaded_l" ? state.loaded_l_max_abs_deviation : state.loaded_max_max_abs_deviation)}
+                value={roundForDisplay(phase.key === "loaded_l" ? state.loaded_l_max_abs_deviation : state.loaded_max_max_abs_deviation)}
                 width="w-20"
               />
             </>

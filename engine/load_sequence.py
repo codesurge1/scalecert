@@ -33,12 +33,17 @@ not prescribe how many additional loads, or where, to place strictly inside
 Band 1 (below the first in-range band transition, or below Max if the whole
 range sits in Band 1) beyond the mandatory anchors, and RRSL has not yet
 confirmed a convention. When the mandatory anchors are fewer than
-MIN_VERIFICATION_LOAD_COUNT, this module fills the gap with EVENLY SPACED
-points inside Band 1. That choice is a documented, deterministic PLACEHOLDER
-CONVENTION — not an OIML requirement — labeled by FILL_SPACING_STRATEGY below
-so it is a one-line change once RRSL confirms an actual convention. Every
-generated load is tagged with its `kind` (LoadEntry.is_anchor), so a fill
-point can never be mistaken downstream (report, UI) for a sourced one.
+MIN_VERIFICATION_LOAD_COUNT, this module fills the gap with points spread
+across Band 1, SNAPPED to a round step — a "nice" 1/2/5 x 10^k increment (the
+same digit pattern clause 3.4.2 itself uses for `e`), so a fill lands on a
+realistic load like 500, 1000, or 2000 g, never on an arbitrary fraction like
+885.714285714285714285714286 that a raw even division of the interval would
+produce. That choice — both spreading the fills across the band AND snapping
+them to a round step — is a documented, deterministic PLACEHOLDER CONVENTION
+— not an OIML requirement — labeled by FILL_SPACING_STRATEGY below so it is a
+one-line change once RRSL confirms an actual convention. Every generated
+load is tagged with its `kind` (LoadEntry.is_anchor), so a fill point can
+never be mistaken downstream (report, UI) for a sourced one.
 
 Bidirectional testing: the plan requires each load tested going up AND
 coming back down. This generator returns only the DISTINCT ascending load
@@ -49,7 +54,7 @@ Standard library only — no third-party imports (same purity guardrail as
 the rest of engine/).
 """
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import List, Optional
 
 from engine.mpe import BAND_TABLE, lookup_mpe
@@ -68,7 +73,14 @@ MIN_CAPACITY_THRESHOLD_GRAMS = Decimal("0.1")
 # PLACEHOLDER pending RRSL confirmation (see module docstring) — not OIML-sourced.
 # Changing the fill convention later should mean changing this label and the
 # one function it names below, nothing else in this module.
-FILL_SPACING_STRATEGY = "even_spacing_within_band_1"
+FILL_SPACING_STRATEGY = "round_step_spacing_within_band_1"
+
+# A fill step is always one of these multiplied by a power of ten — the same
+# 1/2/5 digit pattern clause 3.4.2 requires for the scale interval `e`
+# itself, chosen in descending order so `_nice_step_at_or_below` returns the
+# LARGEST nice value that still fits (fewer, more widely-spaced candidates,
+# closer to the ideal even spacing) rather than the smallest.
+_NICE_STEP_MULTIPLIERS = (Decimal("5"), Decimal("2"), Decimal("1"))
 
 
 def _require_decimal(name: str, value) -> Decimal:
@@ -103,18 +115,91 @@ def _band_transition_loads_m(accuracy_class: AccuracyClass) -> List[Decimal]:
     return [upper for upper, _ in bands[:-1] if upper is not None]
 
 
-def _even_spacing_within_band_1(
+def _nice_step_at_or_below(raw_step: Decimal) -> Decimal:
+    """The largest "nice" round step (a 1/2/5 x 10^k value) that is
+    <= raw_step. Used to snap fill-point spacing to a realistic load
+    increment instead of an arbitrary fraction. Never divides `raw_step`
+    itself — only multiplies/divides a power-of-ten scanner by 10 — so the
+    result is always an exact Decimal, never a repeating one.
+    """
+    if raw_step <= 0:
+        raise ValueError(f"raw_step must be > 0, got {raw_step}")
+    power = Decimal("1")
+    while power > raw_step:
+        power /= 10
+    while power * 10 <= raw_step:
+        power *= 10
+    # Invariant: power <= raw_step < power * 10.
+    for multiplier in _NICE_STEP_MULTIPLIERS:
+        candidate = power * multiplier
+        if candidate <= raw_step:
+            return candidate
+    return power  # power * 1 always satisfies candidate <= raw_step above
+
+
+def _round_fill_points_within_band_1(
     lower_bound: Decimal,
     band1_upper: Decimal,
     count: int,
+    seen_L: set,
 ) -> List[Decimal]:
-    """The placeholder fill strategy named by FILL_SPACING_STRATEGY: `count`
-    points spaced evenly in the open interval (lower_bound, band1_upper).
-    Deterministic and reproducible — never random — but NOT OIML-sourced."""
+    """The fill strategy named by FILL_SPACING_STRATEGY: up to `count` ROUND
+    points (exact multiples of a "nice" 1/2/5 x 10^k step — see
+    `_nice_step_at_or_below` — never a repeating-decimal fraction) spread
+    across the open interval (lower_bound, band1_upper), skipping any value
+    already in `seen_L` (an anchor). Deterministic and reproducible — never
+    random — same as the fractional strategy this replaces, but every
+    resulting load now reads like a real test weight (500 g, 1000 g, ...)
+    instead of a repeating decimal.
+
+    The step is derived once from the ideal even spacing (span / (count+1),
+    same divisor the old fractional strategy used), then snapped down to
+    the nearest nice value — snapping DOWN, not up, guarantees at least as
+    many candidate multiples fit in the interval as the raw spacing would
+    have produced. If more candidates result than `count` (the usual case,
+    since a round step is coarser than the exact ideal spacing only in
+    magnitude, not in how many multiples fit), `count` of them are chosen
+    at even index intervals across the candidate list — the same "spread
+    across the interval" spirit the old fractional formula had, just
+    applied to a discrete list of round values instead of a continuous
+    range.
+    """
     span = band1_upper - lower_bound
-    if span <= 0:
+    if span <= 0 or count <= 0:
         return []
-    return [lower_bound + span * Decimal(i) / Decimal(count + 1) for i in range(1, count + 1)]
+
+    raw_step = span / Decimal(count + 1)
+    step = _nice_step_at_or_below(raw_step)
+
+    # Every nice-step multiple strictly inside the band, excluding anchors —
+    # built by repeated addition, never division, so each candidate is an
+    # exact multiple of `step`.
+    candidates: List[Decimal] = []
+    candidate = (lower_bound // step + 1) * step  # first multiple of step strictly above lower_bound
+    while candidate < band1_upper:
+        if candidate not in seen_L:
+            candidates.append(candidate)
+        candidate += step
+
+    if len(candidates) <= count:
+        return candidates
+
+    n = len(candidates)
+    chosen_indexes = sorted(
+        {
+            int((Decimal(i) * Decimal(n + 1) / Decimal(count + 1)).to_integral_value(rounding=ROUND_HALF_UP)) - 1
+            for i in range(1, count + 1)
+        }
+    )
+    chosen = [candidates[i] for i in chosen_indexes if 0 <= i < n]
+    if len(chosen) < count:
+        # A rounding collision (two target indexes landing on the same
+        # candidate) can occasionally under-fill by one or two — top up
+        # from the remaining, unused candidates, in order, so the result
+        # still has exactly `count` points.
+        remaining = [c for c in candidates if c not in chosen]
+        chosen.extend(remaining[: count - len(chosen)])
+    return sorted(chosen[:count])
 
 
 def generate_load_sequence(
@@ -192,9 +277,9 @@ def generate_load_sequence(
         )
         band1_upper = in_range_transitions[0] if in_range_transitions else max_capacity
 
-        for candidate in _even_spacing_within_band_1(lower_bound, band1_upper, needed):
+        for candidate in _round_fill_points_within_band_1(lower_bound, band1_upper, needed, seen_L):
             if candidate in seen_L:
-                continue  # an anchor already sits exactly here — keep the anchor
+                continue  # an anchor (or an already-chosen fill) already sits exactly here
             seen_L.add(candidate)
             fills.append(_make_entry(candidate, e, LoadKind.FILL, accuracy_class, verification_type))
         # If Band 1 has no span (a degenerate instrument range) there is no
