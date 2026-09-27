@@ -593,3 +593,31 @@ One page, `SessionsListPage.jsx` (route `/sessions`), serves both "My sessions" 
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — feat: guided entry panel for Weighing test
+
+**Done.** Added a keyboard-first guided-entry panel next to the Weighing OIML form table, for the real RRSL workflow: read a value off the machine, record it in one or two keystrokes, without a mouse. The existing click-any-cell table is unchanged in behavior — both surfaces now read/write the exact same cell state via a new shared hook, `useWeighingReadings.js` (extracted from what used to be private state inside `WeighingFormTable`), so a submit from either side is immediately visible on the other.
+
+New files: `src/lib/decimalMath.js` (BigInt-scaled signed string add/multiply — verified against boundary cases like `299.995 + 0.005 = "300"` and `-1.5 + 1.5 = "0"` before trusting it in the UI), `src/components/weighing/formColumns.js` (the ↓/↑-to-up/down mapping, pulled out of `WeighingFormTable.jsx` into its own module so `GuidedEntryPanel` could import it without a circular import), `src/hooks/useWeighingReadings.js` (shared cell state + submit + amendment audit logging), `src/components/weighing/GuidedEntryPanel.jsx` (the panel itself).
+
+**Amend-with-audit:** no backend/schema change was in scope, and there's no `PATCH` endpoint for a reading — but `audit_log`'s own RLS INSERT policy (`actor_id = auth.uid()`) is already open to any authenticated user, not backend-only. So a resubmission whose `I`/`delta_l` actually changed (checked via decimal equality, not string equality — a pure formatting difference never logs a spurious amendment) writes an `audit_log` row directly via the Supabase client, the same per-request JWT-scoped client used everywhere else in the frontend. No backend change, no new gap — just a frontend code path that hadn't used an already-open policy before.
+
+Keyboard flow: Enter commits I → ΔL → submits → advances to the next direction/load, all driven by one flattened list of every `{sequenceNo, apiDirection, field}` stop, shared by auto-advance and explicit Previous/Next buttons. Escape returns focus to the actual table `<input>` the panel is pointing at (a ref map, not just blur). Up/Down arrows nudge ±1g. A `cursor.source: "table"` tag lets a table-cell click update the panel's displayed context without stealing keyboard focus back out of the table. `getCell`/`updateCell` are `useCallback`-memoized specifically so the panel's effects can list them as real dependencies without over-firing on every render — this was the actual fix for an `exhaustive-deps` lint warning my first pass introduced, not a suppression.
+
+`npm run build` succeeds (`2062 modules transformed`, `✓ built in ~900ms-1s` across runs); `npm run lint` shows zero new warning categories versus the pre-existing baseline (confirmed via `git stash -u` against the unmodified branch point). Full pytest suite unaffected — frontend-only task, 596 passed.
+
+**Next:** The real verdict is the preview deploy. Complete an entire Weighing run using only the panel and the keyboard (Tab into the first input, then Enter/arrows/Escape only) — confirm it never needs the mouse. Then click a table cell mid-run to jump the panel there, change a value, and resubmit — confirm the table updates live AND an amendment gets logged (check `audit_log` for `action = 'weighing_reading_amended'`). Confirm the other six tests are completely untouched (still their old per-cell entry, no panel).
+
+**Open questions:**
+- The guided-panel pattern (shared readings hook + cursor-driven panel) is Weighing-only for now — extending it to the other six tests is a later task, not attempted here.
+- `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task.
+- Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
+- Whether this nested-rewrite mechanism actually works under Vercel's `services` model — best real-world evidence available, still unconfirmed from primary docs; if it also fails, escalate rather than guess a fifth shape.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
