@@ -295,12 +295,12 @@ export function DiscriminationFormTable({
         </div>
       </CollapsibleFormHeader>
 
-      <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+      <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-3 font-serif text-neutral-900 sm:p-4">
         <div className="overflow-x-auto">
           {variant === "analog" ? analogTable() : variant === "digital" ? digitalTable() : nonSelfIndicatingTable()}
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           <p className="text-sm">{checkText}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-8 gap-y-2">
             <FormCheckbox label="Passed" checked={overall === "PASSED"} readOnly />
@@ -311,10 +311,10 @@ export function DiscriminationFormTable({
           </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           <p className="text-sm">Remarks:</p>
           <textarea
-            className="mt-1 min-h-14 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+            className="mt-1 min-h-10 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
             disabled={disabled}
             value={remarks}
             onChange={(event) => setRemarks(event.target.value)}

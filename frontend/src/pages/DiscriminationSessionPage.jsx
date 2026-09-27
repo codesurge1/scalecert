@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
-import { FocusedBackLink, PageHeader } from "@/components/AppShell";
+import { FocusedPageHeader } from "@/components/AppShell";
 import { DiscriminationFormTable } from "@/components/discrimination/DiscriminationFormTable";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,8 +61,8 @@ export function DiscriminationSessionPage() {
 
   if (session === undefined) {
     return (
-      <div>
-        <PageHeader title="Discrimination" />
+      <div className="grid gap-2">
+        <FocusedPageHeader title="Discrimination" sessionId={id} />
         <div className="space-y-3">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-64 w-full" />
@@ -73,8 +73,8 @@ export function DiscriminationSessionPage() {
 
   if (session === null) {
     return (
-      <div>
-        <PageHeader title="Discrimination" />
+      <div className="grid gap-2">
+        <FocusedPageHeader title="Discrimination" sessionId={id} />
         <Card className="border-destructive/50 bg-destructive/5">
           <CardContent className="flex items-center justify-between py-4 text-sm text-destructive">
             <span>Couldn't load this session: {error}</span>
@@ -90,12 +90,13 @@ export function DiscriminationSessionPage() {
   const loadingTable = checks === undefined || readingRecords === undefined;
 
   return (
-    <div className="grid gap-4">
-      <FocusedBackLink sessionId={id} />
-      <PageHeader title="Discrimination" />
+    // See ZeroTareSessionPage for the `lg:` height-constrained chain and
+    // why the form wrapper below scrolls as a whole rather than clipping.
+    <div className="grid gap-2 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
+      <FocusedPageHeader title="Discrimination" sessionId={id} />
 
       {session.status !== "draft" ? (
-        <p className="text-sm font-medium text-warning-foreground">
+        <p className="shrink-0 text-sm font-medium text-warning-foreground">
           This session is "{session.status}", not draft — the form below is read-only.
         </p>
       ) : null}
@@ -103,15 +104,17 @@ export function DiscriminationSessionPage() {
       {loadingTable ? (
         <Skeleton className="h-[400px] w-full" />
       ) : (
-        <DiscriminationFormTable
-          sessionId={id}
-          sessionStatus={session.status}
-          instrument={instrument}
-          checks={checks}
-          verificationType={session.verification_type}
-          observerDefault={authSession?.user?.email}
-          initialReadings={readingRecords}
-        />
+        <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+          <DiscriminationFormTable
+            sessionId={id}
+            sessionStatus={session.status}
+            instrument={instrument}
+            checks={checks}
+            verificationType={session.verification_type}
+            observerDefault={authSession?.user?.email}
+            initialReadings={readingRecords}
+          />
+        </div>
       )}
     </div>
   );

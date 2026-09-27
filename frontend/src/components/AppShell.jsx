@@ -175,17 +175,34 @@ export function AppShell() {
  * task, not a browsing task: the technician needs the full viewport width
  * for the form table, not a 256px nav rail they aren't using while heads-down
  * on one session. The only way back is the breadcrumb every test page
- * already renders via `FocusedBackLink`, kept deliberately prominent since
+ * already renders via `FocusedPageHeader`, kept deliberately prominent since
  * it's now the sole navigation affordance on screen (docs/architecture.md,
  * focused test-entry mode).
+ *
+ * `lg:h-dvh lg:overflow-hidden` (new, `fix/vertical-fit-no-page-scroll`) —
+ * gated at the SAME `lg` breakpoint the two-column table+panel layout
+ * already switches on, deliberately: below `lg` this reverts to the
+ * original `min-h-screen` document flow (page scrolls normally, content
+ * stacks) — the existing narrow-viewport fallback is untouched. At `lg`+,
+ * the shell becomes a fixed-height, non-scrolling frame — `<header>` and
+ * `<main>`'s own padding are the only page-level chrome, and `<main>`
+ * hands its exact remaining height down to whatever `<Outlet/>` renders
+ * (`lg:flex lg:min-h-0 lg:flex-col`, so a `lg:flex-1 lg:min-h-0` child
+ * gets a real, definite height to size itself against) — each test page is
+ * then responsible for turning that into "chrome fixed, one region
+ * scrolls," not the page itself. `WeighingSessionPage`/`WeighingFormTable`
+ * carry that all the way down to the table's own row-scrolling region
+ * (docs/architecture.md); the other six pages get the same fixed frame
+ * plus a simpler whole-sheet scroll fallback, since their content is
+ * short enough that it rarely engages.
  */
 export function FocusedShell() {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="border-b bg-primary px-4 py-2 text-primary-foreground">
+    <div className="flex min-h-screen flex-col bg-background lg:h-dvh lg:overflow-hidden">
+      <header className="shrink-0 border-b bg-primary px-4 py-1.5 text-primary-foreground">
         <span className="text-sm font-semibold tracking-wide">ScaleCert</span>
       </header>
-      <main className="flex-1 px-4 py-4 sm:px-6">
+      <main className="flex-1 px-4 py-3 sm:px-6 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden lg:py-2">
         <Outlet />
       </main>
     </div>
@@ -193,21 +210,31 @@ export function FocusedShell() {
 }
 
 /**
- * The "way back" every test-entry page leads with — same destination
- * (`/sessions/:id`, the session overview) every seven pages already linked
- * to as a plain text link; rebuilt as a small bordered pill specifically so
- * it reads as prominent wayfinding now that it's the only nav element on
- * an otherwise sidebar-free screen, not a rebuild of where it goes.
+ * The way back AND the page title, on one slim row — merged
+ * (`fix/vertical-fit-no-page-scroll`) from what used to be a full-width
+ * bordered back-link pill followed by a separate `PageHeader` (a 2xl
+ * heading with its own `mb-6`), which together cost ~115px of vertical
+ * chrome on every test-entry screen before any table content. One line —
+ * back-link pill, a middle dot, the title — costs ~30px instead, and is
+ * still exactly as prominent a wayfinding affordance (same pill styling,
+ * same destination) since it's still the only nav element on an otherwise
+ * sidebar-free screen.
  */
-export function FocusedBackLink({ sessionId }) {
+export function FocusedPageHeader({ title, sessionId }) {
   return (
-    <Link
-      to={`/sessions/${sessionId}`}
-      className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1.5 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
-    >
-      <ArrowLeft className="h-4 w-4" />
-      Session overview
-    </Link>
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
+      <Link
+        to={`/sessions/${sessionId}`}
+        className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Session overview
+      </Link>
+      <span className="text-muted-foreground" aria-hidden="true">
+        &middot;
+      </span>
+      <h1 className="text-sm font-semibold text-foreground">{title}</h1>
+    </div>
   );
 }
 

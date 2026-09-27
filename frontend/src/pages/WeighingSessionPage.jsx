@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
-import { FocusedBackLink, PageHeader } from "@/components/AppShell";
+import { FocusedPageHeader } from "@/components/AppShell";
 import { WeighingFormTable } from "@/components/weighing/WeighingFormTable";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -63,8 +63,8 @@ export function WeighingSessionPage() {
 
   if (session === undefined) {
     return (
-      <div>
-        <PageHeader title="Weighing" />
+      <div className="grid gap-2">
+        <FocusedPageHeader title="Weighing" sessionId={id} />
         <div className="space-y-3">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-96 w-full" />
@@ -75,8 +75,8 @@ export function WeighingSessionPage() {
 
   if (session === null) {
     return (
-      <div>
-        <PageHeader title="Weighing" />
+      <div className="grid gap-2">
+        <FocusedPageHeader title="Weighing" sessionId={id} />
         <Card className="border-destructive/50 bg-destructive/5">
           <CardContent className="flex items-center justify-between py-4 text-sm text-destructive">
             <span>Couldn't load this session: {error}</span>
@@ -92,12 +92,18 @@ export function WeighingSessionPage() {
   const loadingTable = sequence === undefined || readingRecords === undefined;
 
   return (
-    <div className="grid gap-4">
-      <FocusedBackLink sessionId={id} />
-      <PageHeader title="Weighing" />
+    // `lg:flex lg:h-full lg:min-h-0 lg:flex-col` — matches FocusedShell's
+    // `lg:` height-constrained frame (docs/architecture.md): at `lg`+ this
+    // column gets a real, definite height from `<main>`, and hands its own
+    // remaining height down to the `lg:min-h-0 lg:flex-1` wrapper around
+    // `WeighingFormTable` below — the chain that lets the table's own row
+    // area be the one thing that scrolls, instead of the page. Below `lg`,
+    // plain `grid` stacking with normal page scroll, unchanged.
+    <div className="grid gap-2 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
+      <FocusedPageHeader title="Weighing" sessionId={id} />
 
       {session.status !== "draft" ? (
-        <p className="text-sm font-medium text-warning-foreground">
+        <p className="shrink-0 text-sm font-medium text-warning-foreground">
           This session is "{session.status}", not draft — the form below is read-only.
         </p>
       ) : null}
@@ -111,16 +117,18 @@ export function WeighingSessionPage() {
           </CardContent>
         </Card>
       ) : (
-        <WeighingFormTable
-          sessionId={id}
-          sessionStatus={session.status}
-          instrument={instrument}
-          sequence={sequence}
-          verificationType={session.verification_type}
-          observerDefault={authSession?.user?.email}
-          initialReadings={readingRecords}
-          actorId={authSession?.user?.id}
-        />
+        <div className="lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+          <WeighingFormTable
+            sessionId={id}
+            sessionStatus={session.status}
+            instrument={instrument}
+            sequence={sequence}
+            verificationType={session.verification_type}
+            observerDefault={authSession?.user?.email}
+            initialReadings={readingRecords}
+            actorId={authSession?.user?.id}
+          />
+        </div>
       )}
     </div>
   );
