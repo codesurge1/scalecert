@@ -4,30 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 import { addDecimalStrings, multiplyDecimalStringBySmallInt } from "@/lib/decimalMath";
-import { FORM_COLUMNS } from "@/components/weighing/formColumns";
+import { FORM_COLUMNS, buildGuidedWalkPositions } from "@/components/weighing/formColumns";
 
 const DIRECTION_WORDS = { up: "increasing", down: "decreasing" };
+// Matches the physical procedure buildGuidedWalkPositions encodes (A.4.4.1):
+// "up" is the whole increasing pass, "down" is the whole decreasing pass —
+// never "load N's up/down direction" the way the old per-load walk implied.
+const PASS_LABELS = { up: "Increasing pass", down: "Decreasing pass" };
 const FINE_STEPS = [-10, -5, -1, 1, 5, 10];
 const SCALE_MULTIPLIERS = [-5, -2, -1, 1, 2, 5];
 
 function directionGlyph(apiDirection) {
   return FORM_COLUMNS.find((col) => col.apiDirection === apiDirection)?.glyph ?? apiDirection;
-}
-
-// The full guided walk, flattened to one ordered list of every
-// {sequenceNo, apiDirection, field} stop — one shared list drives BOTH
-// "Enter" auto-advance (I -> ΔL -> submit -> next direction's I) and the
-// manual Previous/Next buttons, so there's exactly one definition of "what
-// comes next" rather than two that could disagree.
-function buildFlatPositions(sequence) {
-  const positions = [];
-  for (const entry of sequence) {
-    for (const col of FORM_COLUMNS) {
-      positions.push({ sequenceNo: entry.sequence_no, apiDirection: col.apiDirection, field: "indication" });
-      positions.push({ sequenceNo: entry.sequence_no, apiDirection: col.apiDirection, field: "deltaL" });
-    }
-  }
-  return positions;
 }
 
 function findPositionIndex(positions, cursor) {
@@ -37,16 +25,14 @@ function findPositionIndex(positions, cursor) {
   );
 }
 
-// One entry per (load, direction) — used only to find "the most recently
-// submitted direction before the current one," for the "last recorded"
-// readout. A coarser list than buildFlatPositions on purpose: a reading's
-// result lives per-direction, not per-field.
+// One entry per (load, direction), in guided-walk order — used only to find
+// "the most recently submitted direction before the current one," for the
+// "last recorded" readout. Derived from the SAME flat list `moveTo` uses
+// (filtered to each direction's first stop, "indication," which is unique
+// per direction) rather than a second, independently-written traversal —
+// exactly the "one definition of what comes next" this task's fix depends on.
 function buildDirectionPositions(sequence) {
-  const positions = [];
-  for (const entry of sequence) {
-    for (const col of FORM_COLUMNS) positions.push({ sequenceNo: entry.sequence_no, apiDirection: col.apiDirection });
-  }
-  return positions;
+  return buildGuidedWalkPositions(sequence).filter((p) => p.field === "indication");
 }
 
 /**
@@ -127,7 +113,7 @@ export function GuidedEntryPanel({
   const eValue = instrument?.e_value;
 
   function moveTo(delta) {
-    const positions = buildFlatPositions(sequence);
+    const positions = buildGuidedWalkPositions(sequence);
     const idx = findPositionIndex(positions, cursor);
     const target = idx === -1 ? null : positions[idx + delta] ?? null;
     if (target) setCursor(target);
@@ -203,8 +189,9 @@ export function GuidedEntryPanel({
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Guided entry</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Load {loadIndex + 1} of {sequence.length} · {directionGlyph(cursor.apiDirection)}{" "}
-          {DIRECTION_WORDS[cursor.apiDirection]}
+          <span className="font-medium text-foreground">{PASS_LABELS[cursor.apiDirection]}</span>
+          {" · "}Load {loadIndex + 1} of {sequence.length} ({directionGlyph(cursor.apiDirection)}{" "}
+          {DIRECTION_WORDS[cursor.apiDirection]})
         </p>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -243,7 +230,7 @@ export function GuidedEntryPanel({
 
         <div className="grid gap-1.5">
           <span className="text-xs text-muted-foreground">Fine (grams)</span>
-          <div className="grid grid-cols-6 gap-1">
+          <div className="grid grid-cols-3 gap-1 sm:grid-cols-6">
             {FINE_STEPS.map((step) => (
               <Button
                 key={step}

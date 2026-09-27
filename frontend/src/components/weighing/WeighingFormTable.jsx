@@ -4,7 +4,7 @@ import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 import { useWeighingReadings } from "@/hooks/useWeighingReadings";
 import { GuidedEntryPanel } from "@/components/weighing/GuidedEntryPanel";
-import { FORM_COLUMNS } from "@/components/weighing/formColumns";
+import { FORM_COLUMNS, buildGuidedWalkPositions } from "@/components/weighing/formColumns";
 import { cn } from "@/lib/utils";
 
 const ZERO_DEVICE_OPTIONS = [
@@ -35,17 +35,21 @@ function fmt(value) {
   return value === undefined || value === null || value === "" ? "" : value;
 }
 
-// The first not-yet-submitted {sequence_no, direction} pair, in the same
-// order the table itself reads (each load's "up"/"down" — table columns
-// "↓"/"↑" — before moving to the next load). Lets the guided panel resume
-// exactly where a technician left off on reload, instead of always
-// restarting at load 1 and forcing a click-through of already-done work.
+// The first not-yet-submitted {sequence_no, direction} pair, in the SAME
+// guided-walk order the panel itself uses (buildGuidedWalkPositions: the
+// full increasing pass first, then the full decreasing pass in reverse —
+// never "load N's up, then load N's down" — see formColumns.js). Lets the
+// guided panel resume exactly where a technician left off on reload,
+// instead of always restarting at load 1 and forcing a click-through of
+// already-done work.
 function findFirstIncomplete(sequence, cells) {
-  for (const entry of sequence) {
-    for (const col of FORM_COLUMNS) {
-      if (!cells[entry.sequence_no]?.[col.apiDirection]?.result) {
-        return { sequenceNo: entry.sequence_no, apiDirection: col.apiDirection, field: "indication" };
-      }
+  const seen = new Set();
+  for (const pos of buildGuidedWalkPositions(sequence)) {
+    const key = `${pos.sequenceNo}-${pos.apiDirection}`;
+    if (seen.has(key)) continue; // each direction appears twice (indication, deltaL) — check once
+    seen.add(key);
+    if (!cells[pos.sequenceNo]?.[pos.apiDirection]?.result) {
+      return { sequenceNo: pos.sequenceNo, apiDirection: pos.apiDirection, field: "indication" };
     }
   }
   return null;
@@ -115,8 +119,17 @@ export function WeighingFormTable({
   function inputCell(entry, apiDirection, field) {
     const cell = getCell(entry.sequence_no, apiDirection);
     const key = `${entry.sequence_no}-${apiDirection}-${field}`;
+    // The precise field the guided panel is on right now — not just "this
+    // row" (that's the subtler `isActiveRow` tint below) but this exact
+    // cell, tracking the I -> ΔL sub-step too, so the panel and the table
+    // are unmistakably pointing at the same thing.
+    const isActiveCell =
+      cursor?.sequenceNo === entry.sequence_no && cursor?.apiDirection === apiDirection && cursor?.field === field;
     return (
-      <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
+      <td
+        className={cn("border border-neutral-900 p-0", isActiveCell && "bg-amber-200 ring-2 ring-inset ring-amber-500")}
+        title={cell.error ?? undefined}
+      >
         <input
           ref={(el) => {
             if (el) inputRefs.current.set(key, el);
@@ -185,8 +198,17 @@ export function WeighingFormTable({
   }, [rowVerdicts]);
 
   return (
+    // `min-w-0` on BOTH grid items, not just `lg:` — without it, a grid
+    // item defaults to using its content's intrinsic width (here, the
+    // table's own `min-w-[720px]`) as its minimum, which forces the grid
+    // track — and the whole page — wider than the viewport instead of
+    // letting the table's own `overflow-x-auto` contain the scroll like
+    // it's supposed to. `order-*` puts the panel FIRST when stacked below
+    // `lg` (the primary keyboard-first entry point shouldn't sit below a
+    // potentially long table the technician has to scroll past first),
+    // reverting to natural left-table/right-panel order at `lg` and up.
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
-      <div className="grid gap-3 lg:min-w-0">
+      <div className="order-2 grid min-w-0 gap-3 lg:order-none">
         <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} date={testDate} observer={observer}>
           <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
             <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
@@ -318,7 +340,10 @@ export function WeighingFormTable({
             <table className="w-full min-w-[720px] border-collapse text-xs">
               <thead>
                 <tr>
-                  <th rowSpan={2} className="sticky left-0 z-10 border border-neutral-900 bg-neutral-50 px-2 py-1 align-middle">
+                  <th
+                    rowSpan={2}
+                    className="sticky left-0 z-10 border border-neutral-900 bg-neutral-50 px-2 py-1 align-middle shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]"
+                  >
                     Load, <i>L</i>
                   </th>
                   <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
@@ -351,17 +376,16 @@ export function WeighingFormTable({
               </thead>
               <tbody>
                 {sequence.map((entry) => {
-                  // Active-row highlight — keeps the panel and table
-                  // mentally connected: whichever load the guided panel is
-                  // currently pointed at is visually obvious in the table,
-                  // not just named in the panel's own progress line.
-                  const isActive = cursor?.sequenceNo === entry.sequence_no;
+                  // Subtler row-level tint for orientation ("this is the
+                  // panel's current load") — the PRECISE field is the
+                  // stronger per-cell highlight in inputCell(), below.
+                  const isActiveRow = cursor?.sequenceNo === entry.sequence_no;
                   return (
-                    <tr key={entry.sequence_no} className={cn(isActive && "bg-amber-50")}>
+                    <tr key={entry.sequence_no} className={cn(isActiveRow && "bg-amber-50/70")}>
                       <td
                         className={cn(
-                          "sticky left-0 z-10 border border-neutral-900 px-2 py-1 text-right",
-                          isActive ? "bg-amber-100 font-semibold" : "bg-white",
+                          "sticky left-0 z-10 border border-neutral-900 px-2 py-1 text-right shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]",
+                          isActiveRow ? "bg-amber-50 font-medium" : "bg-white",
                         )}
                       >
                         {roundLoadForDisplay(entry.L)}
@@ -427,8 +451,14 @@ export function WeighingFormTable({
           ("the guided panel must never scroll out of reach mid-entry").
           `self-start` (via the parent's `lg:items-start`) keeps it from
           stretching to the table's full height, which would otherwise
-          defeat `sticky` entirely. */}
-      <div className="lg:sticky lg:top-4">
+          defeat `sticky` entirely. `order-1`/`lg:order-none` puts it above
+          the table when stacked (see the comment on the grid container).
+          `max-w-xl`/`lg:max-w-none` keeps it from stretching edge-to-edge
+          on a tablet-width screen still below `lg` (a real sidebar-style
+          control surface shouldn't span 900px just because it's stacked) —
+          full-bleed is still fine on a genuinely narrow phone, where
+          max-w-xl (36rem) never actually constrains anything. */}
+      <div className="order-1 mx-auto w-full min-w-0 max-w-xl lg:order-none lg:sticky lg:top-4 lg:max-w-none">
         <GuidedEntryPanel
           sequence={sequence}
           instrument={instrument}
