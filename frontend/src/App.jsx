@@ -14,6 +14,10 @@ import { EccentricitySessionPage } from "@/pages/EccentricitySessionPage";
 import { DiscriminationSessionPage } from "@/pages/DiscriminationSessionPage";
 import { SensitivitySessionPage } from "@/pages/SensitivitySessionPage";
 import { TiltingSessionPage } from "@/pages/TiltingSessionPage";
+import { VoltageVariationsSessionPage } from "@/pages/VoltageVariationsSessionPage";
+import { AcMainsDipsSessionPage } from "@/pages/AcMainsDipsSessionPage";
+import { ElectricalBurstsSessionPage } from "@/pages/ElectricalBurstsSessionPage";
+import { ElectrostaticDischargesSessionPage } from "@/pages/ElectrostaticDischargesSessionPage";
 import { SessionsListPage } from "@/pages/SessionsListPage";
 import { DiscrepancyReportsPage } from "@/pages/DiscrepancyReportsPage";
 import { AuditTrailPage } from "@/pages/AuditTrailPage";
@@ -59,6 +63,17 @@ export default function App() {
           <Route path="/sessions/:id/discrimination" element={<DiscriminationSessionPage />} />
           <Route path="/sessions/:id/sensitivity" element={<SensitivitySessionPage />} />
           <Route path="/sessions/:id/tilting" element={<TiltingSessionPage />} />
+          {/* Clause 11 + clause 12.x (feat/disturbance-test-forms) —
+              voltage variations is computed (reuses the Weighing engine);
+              the other three are record-only (no engine — physical EMC
+              equipment required, docs/architecture.md). Surges (12.3),
+              radiated EM (12.5), conducted RF (12.6), and road-vehicle
+              transients (12.7) are NOT built this task — no route for
+              them. */}
+          <Route path="/sessions/:id/voltage-variations" element={<VoltageVariationsSessionPage />} />
+          <Route path="/sessions/:id/ac-mains-dips" element={<AcMainsDipsSessionPage />} />
+          <Route path="/sessions/:id/electrical-bursts" element={<ElectricalBurstsSessionPage />} />
+          <Route path="/sessions/:id/electrostatic-discharges" element={<ElectrostaticDischargesSessionPage />} />
         </Route>
       </Route>
 

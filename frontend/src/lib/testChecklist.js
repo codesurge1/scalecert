@@ -57,6 +57,48 @@ export const TEST_ROWS = [
       instrument.indication_type !== "non_self_indicating" ? "N/A — non-self-indicating instruments only" : null,
     route: (sessionId) => `/sessions/${sessionId}/sensitivity`,
   },
+  // Added feat/disturbance-test-forms — clause 11 and clause 12.x. All
+  // four are N/A for a non-self-indicating instrument: there's no
+  // electronics for a voltage variation or an electrical disturbance to
+  // act on (a mechanical beam balance has no power supply to vary or
+  // disturb). Digital and analog instruments are both electronic, so
+  // both are applicable to all four. Surges (12.3), radiated EM (12.5),
+  // conducted RF (12.6), and road-vehicle transients (12.7) are real
+  // OIML clauses this app has not built yet (docs/architecture.md) — no
+  // row for them here, same "a row with no route has no form" rule every
+  // other not-yet-implemented row already followed before this task.
+  {
+    key: "voltage_variations",
+    label: "Voltage variations",
+    clause: "A.5.4",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/voltage-variations`,
+  },
+  {
+    key: "ac_mains_dips",
+    label: "AC mains voltage dips & short interruptions",
+    clause: "B.3.1",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/ac-mains-dips`,
+  },
+  {
+    key: "electrical_bursts",
+    label: "Electrical bursts",
+    clause: "B.3.2",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/electrical-bursts`,
+  },
+  {
+    key: "electrostatic_discharges",
+    label: "Electrostatic discharges",
+    clause: "B.3.4",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/electrostatic-discharges`,
+  },
 ];
 
 // A row with a `route` has a working form; the rest ("Coming soon") don't

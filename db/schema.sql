@@ -17,7 +17,18 @@ create type test_type as enum (
   'eccentricity',    -- A.4.7, 3.1 (weights)
   'discrimination',  -- A.4.8  (gated: N/A for digital instruments)
   'tilting',         -- A.5.1.3 (gated: mobile instruments only)
-  'sensitivity'      -- A.4.9  (gated: non-self-indicating instruments only)
+  'sensitivity',     -- A.4.9  (gated: non-self-indicating instruments only)
+  -- Added feat/disturbance-test-forms. Clause 11 is computed (reuses the
+  -- Weighing engine); the four clause-12.x values are record-only — no
+  -- engine, just the technician's observation (docs/architecture.md). All
+  -- five gated: N/A for non-self-indicating instruments (no electronics to
+  -- disturb). For an ALREADY-PROVISIONED project, these five values must be
+  -- added via `ALTER TYPE test_type ADD VALUE` instead of a fresh apply of
+  -- this file — see db/migrations/004_disturbance_test_types.sql.
+  'voltage_variations',        -- A.5.4  (clause 11 — computed)
+  'ac_mains_dips',              -- B.3.1  (clause 12.1 — record-only)
+  'electrical_bursts',          -- B.3.2  (clause 12.2 — record-only)
+  'electrostatic_discharges'    -- B.3.4  (clause 12.4 — record-only)
 );
 
 -- ============ CORE TABLES ============

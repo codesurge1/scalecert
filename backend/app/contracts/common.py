@@ -60,6 +60,15 @@ class TestType(str, Enum):
     DISCRIMINATION = "discrimination"
     TILTING = "tilting"
     SENSITIVITY = "sensitivity"
+    # Added feat/disturbance-test-forms — clause 11 and clause 12.x. See the
+    # exact `ALTER TYPE test_type ADD VALUE` SQL in
+    # db/migrations/004_disturbance_test_types.sql (must be run against a
+    # live project before this code can insert rows of these types) and
+    # db/schema.sql (updated for a fresh apply).
+    VOLTAGE_VARIATIONS = "voltage_variations"
+    AC_MAINS_DIPS = "ac_mains_dips"
+    ELECTRICAL_BURSTS = "electrical_bursts"
+    ELECTROSTATIC_DISCHARGES = "electrostatic_discharges"
 
 
 def _parse_strict_decimal(value: Any) -> Decimal:
