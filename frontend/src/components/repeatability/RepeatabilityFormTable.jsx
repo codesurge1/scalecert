@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormBox, FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
@@ -45,7 +46,7 @@ function cellsFromSeries(seriesList) {
  * 10-row tables reproduce the form's own "weighing 1-10" / "weighing 11-20"
  * layout.
  */
-export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, series, observerDefault }) {
+export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, series, verificationType, observerDefault }) {
   const disabled = sessionStatus !== "draft";
 
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -190,41 +191,45 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
 
   return (
     <div className="grid gap-3">
-      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-          <span>OIML R 76-2: 2007 (E)</span>
-          <span>Report page &hellip;./&hellip;.</span>
-        </div>
-
-        <h2 className="text-sm font-bold">5&nbsp;&nbsp;&nbsp;REPEATABILITY (A.4.10)</h2>
-
-        <div className="mt-5 grid gap-1.5 text-sm sm:grid-cols-2 sm:gap-x-10">
-          <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-          <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-          <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-          <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-          <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
-        </div>
-
-        <div className="mt-5">
-          <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
-          <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
-            {ZERO_DEVICE_OPTIONS.map((opt) => (
-              <FormCheckbox
-                key={opt.value}
-                label={opt.label}
-                checked={zeroDeviceStatus === opt.value}
-                onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
-              />
-            ))}
+      <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} observer={observer}>
+        <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+            <span>OIML R 76-2: 2007 (E)</span>
+            <span>Report page &hellip;./&hellip;.</span>
           </div>
+
+          <h2 className="text-sm font-bold">5&nbsp;&nbsp;&nbsp;REPEATABILITY (A.4.10)</h2>
+
+          <div className="mt-5 grid gap-1.5 text-sm sm:grid-cols-2 sm:gap-x-10">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+          </div>
+
+          <div className="mt-5">
+            <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+            <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
+              {ZERO_DEVICE_OPTIONS.map((opt) => (
+                <FormCheckbox
+                  key={opt.value}
+                  label={opt.label}
+                  checked={zeroDeviceStatus === opt.value}
+                  onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-5 text-sm">
+            <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>
+          </p>
         </div>
+      </CollapsibleFormHeader>
 
-        <p className="mt-5 text-sm">
-          <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>
-        </p>
-
-        <div className="mt-4 grid gap-6 overflow-x-auto sm:grid-cols-2">
+      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+        <div className="grid gap-6 overflow-x-auto sm:grid-cols-2">
           {seriesTable(1, 0)}
           {seriesTable(2, ROWS_PER_SERIES)}
         </div>

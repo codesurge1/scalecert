@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LogOut, Menu, X } from "lucide-react";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { ArrowLeft, LogOut, Menu, X } from "lucide-react";
 import { supabase, useSession } from "@/lib/supabase";
 import { useProfile } from "@/hooks/useProfile";
 import { navItemsForRole } from "@/lib/navigation";
@@ -165,6 +165,49 @@ export function AppShell() {
         </main>
       </div>
     </div>
+  );
+}
+
+/**
+ * The layout every TEST-ENTRY screen renders inside instead of `AppShell` —
+ * no sidebar at all (not hidden via CSS, literally not mounted, so it never
+ * fetches a profile or takes up a DOM node). Data entry is a workstation
+ * task, not a browsing task: the technician needs the full viewport width
+ * for the form table, not a 256px nav rail they aren't using while heads-down
+ * on one session. The only way back is the breadcrumb every test page
+ * already renders via `FocusedBackLink`, kept deliberately prominent since
+ * it's now the sole navigation affordance on screen (docs/architecture.md,
+ * focused test-entry mode).
+ */
+export function FocusedShell() {
+  return (
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="border-b bg-primary px-4 py-2 text-primary-foreground">
+        <span className="text-sm font-semibold tracking-wide">ScaleCert</span>
+      </header>
+      <main className="flex-1 px-4 py-4 sm:px-6">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+
+/**
+ * The "way back" every test-entry page leads with — same destination
+ * (`/sessions/:id`, the session overview) every seven pages already linked
+ * to as a plain text link; rebuilt as a small bordered pill specifically so
+ * it reads as prominent wayfinding now that it's the only nav element on
+ * an otherwise sidebar-free screen, not a rebuild of where it goes.
+ */
+export function FocusedBackLink({ sessionId }) {
+  return (
+    <Link
+      to={`/sessions/${sessionId}`}
+      className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1.5 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Session overview
+    </Link>
   );
 }
 

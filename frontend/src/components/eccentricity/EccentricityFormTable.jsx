@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
@@ -43,7 +44,15 @@ function cellsFromInitialReadings(initialReadings) {
  * pre-question is out of scope to fully model (per this task) and is kept
  * as a local-only remark, not submitted/stored.
  */
-export function EccentricityFormTable({ sessionId, sessionStatus, instrument, setup, observerDefault, initialReadings }) {
+export function EccentricityFormTable({
+  sessionId,
+  sessionStatus,
+  instrument,
+  setup,
+  verificationType,
+  observerDefault,
+  initialReadings,
+}) {
   const disabled = sessionStatus !== "draft";
 
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -102,63 +111,67 @@ export function EccentricityFormTable({ sessionId, sessionStatus, instrument, se
 
   return (
     <div className="grid gap-3">
+      <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} observer={observer}>
+        <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+            <span>OIML R 76-2: 2007 (E)</span>
+            <span>Report page &hellip;./&hellip;.</span>
+          </div>
+
+          <h2 className="text-sm font-bold">3&nbsp;&nbsp;&nbsp;ECCENTRICITY (A.4.7)</h2>
+          <p className="ml-8 text-sm">3.1 Eccentricity using weights (A.4.7.1, 2 and 3)</p>
+
+          <div className="mt-5 grid gap-1.5 text-sm">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
+            <span>Test(s) performed on a mobile instrument:</span>
+            <FormCheckbox label="Yes" checked={mobileInstrument === "yes"} onClick={() => !disabled && setMobileInstrument("yes")} />
+            <FormCheckbox label="No" checked={mobileInstrument === "no"} onClick={() => !disabled && setMobileInstrument("no")} />
+            <span className="text-xs italic text-neutral-600">(remark only — not modeled beyond this flag)</span>
+          </div>
+
+          <div className="mt-5 flex items-start gap-6">
+            <div>
+              <p className="mb-1 text-sm">Location of test loads:</p>
+              <div className="grid w-28 grid-cols-2 grid-rows-2 border border-neutral-900 text-center text-sm">
+                <div className="border-b border-r border-dashed border-neutral-500 py-2">1</div>
+                <div className="border-b border-dashed border-neutral-500 py-2">2</div>
+                <div className="border-r border-dashed border-neutral-500 py-2">4</div>
+                <div className="py-2">3</div>
+              </div>
+            </div>
+            <div className="mt-5">
+              <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+              <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-2">
+                {ZERO_DEVICE_OPTIONS.map((opt) => (
+                  <FormCheckbox
+                    key={opt.value}
+                    label={opt.label}
+                    checked={zeroDeviceStatus === opt.value}
+                    onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <p className="mt-5 text-sm">
+            <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>, &nbsp; <i>E</i>
+            <sub>c</sub> = <i>E</i> − <i>E</i>
+            <sub>0</sub> with <i>E</i>
+            <sub>0</sub> determined prior to each measurement
+          </p>
+        </div>
+      </CollapsibleFormHeader>
+
       <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-          <span>OIML R 76-2: 2007 (E)</span>
-          <span>Report page &hellip;./&hellip;.</span>
-        </div>
-
-        <h2 className="text-sm font-bold">3&nbsp;&nbsp;&nbsp;ECCENTRICITY (A.4.7)</h2>
-        <p className="ml-8 text-sm">3.1 Eccentricity using weights (A.4.7.1, 2 and 3)</p>
-
-        <div className="mt-5 grid gap-1.5 text-sm">
-          <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-          <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-          <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-          <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-          <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
-          <span>Test(s) performed on a mobile instrument:</span>
-          <FormCheckbox label="Yes" checked={mobileInstrument === "yes"} onClick={() => !disabled && setMobileInstrument("yes")} />
-          <FormCheckbox label="No" checked={mobileInstrument === "no"} onClick={() => !disabled && setMobileInstrument("no")} />
-          <span className="text-xs italic text-neutral-600">(remark only — not modeled beyond this flag)</span>
-        </div>
-
-        <div className="mt-5 flex items-start gap-6">
-          <div>
-            <p className="mb-1 text-sm">Location of test loads:</p>
-            <div className="grid w-28 grid-cols-2 grid-rows-2 border border-neutral-900 text-center text-sm">
-              <div className="border-b border-r border-dashed border-neutral-500 py-2">1</div>
-              <div className="border-b border-dashed border-neutral-500 py-2">2</div>
-              <div className="border-r border-dashed border-neutral-500 py-2">4</div>
-              <div className="py-2">3</div>
-            </div>
-          </div>
-          <div className="mt-5">
-            <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
-            <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-2">
-              {ZERO_DEVICE_OPTIONS.map((opt) => (
-                <FormCheckbox
-                  key={opt.value}
-                  label={opt.label}
-                  checked={zeroDeviceStatus === opt.value}
-                  onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <p className="mt-5 text-sm">
-          <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>, &nbsp; <i>E</i>
-          <sub>c</sub> = <i>E</i> − <i>E</i>
-          <sub>0</sub> with <i>E</i>
-          <sub>0</sub> determined prior to each measurement
-        </p>
-
-        <div className="mt-4 overflow-x-auto">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] border-collapse text-xs">
             <thead>
               <tr>

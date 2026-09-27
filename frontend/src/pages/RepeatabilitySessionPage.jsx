@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
-import { PageHeader } from "@/components/AppShell";
+import { FocusedBackLink, PageHeader } from "@/components/AppShell";
 import { RepeatabilityFormTable } from "@/components/repeatability/RepeatabilityFormTable";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -86,9 +86,7 @@ export function RepeatabilitySessionPage() {
 
   return (
     <div className="grid gap-4">
-      <Link to={`/sessions/${id}`} className="text-sm text-muted-foreground hover:text-foreground hover:underline">
-        &larr; Session overview
-      </Link>
+      <FocusedBackLink sessionId={id} />
       <PageHeader title="Repeatability" />
 
       {session.status !== "draft" ? (
@@ -105,6 +103,7 @@ export function RepeatabilitySessionPage() {
           sessionStatus={session.status}
           instrument={instrument}
           series={series}
+          verificationType={session.verification_type}
           observerDefault={authSession?.user?.email}
         />
       )}

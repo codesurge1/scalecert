@@ -621,3 +621,32 @@ Keyboard flow: Enter commits I → ΔL → submits → advances to the next dire
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — fix: focused layout for test entry screens
+
+**Done.** Production feedback: the Weighing screen didn't work as a workstation — the R76-2 header filled the viewport, the sidebar stole width, the guided panel scrolled away, and the table clipped against the panel. Pure layout fix, applied consistently across all seven test-entry pages, not just Weighing — no computation, submission, or entry behavior changed anywhere.
+
+New `FocusedShell` (`AppShell.jsx`) — a sidebar-free layout, a sibling route to `AppShell` in `App.jsx`, still inside `AuthGate`. All seven test routes (`/sessions/:id/weighing` through `/tilting`) now render inside it instead of `AppShell`; every other authenticated route is unaffected. The sidebar literally doesn't mount on these routes, not just CSS-hidden. `FocusedBackLink` (same file) replaces the plain-text "← Session overview" line all seven pages had, as a small bordered pill — the sole nav affordance left on screen, so it needed to read as prominent, not rebuilt to go anywhere new.
+
+New `CollapsibleFormHeader` (`src/components/oiml/`) — a compact, always-visible, sans-serif summary strip (instrument, e, Max, verification type, date/observer where tracked) above each test's OIML sheet, collapsed by default, with a "Show full form header" toggle revealing the form's own full header block unchanged. All seven `*FormTable.jsx` now take a `verificationType` prop (threaded from each SessionPage's `session.verification_type`, display-only) so the strip can show it.
+
+Weighing-specific (per task scope — only Weighing has the guided panel): the table sheet is now full remaining-column width instead of capped at `max-w-4xl`, so the sticky panel has real room to stay pinned beside a genuinely wide table; the `Load, L` column is `sticky left-0` within the table's own scroll container so it's never lost during horizontal scroll; each table row highlights (light amber) when it matches the guided panel's current `cursor.sequenceNo` — the panel's "Load N of M" text and the highlighted row are now the same fact shown twice.
+
+`npm run build` succeeds (`2063 modules transformed`, `✓ built in ~1s`); `npm run lint` shows zero new warning categories versus the pre-existing baseline. Full pytest suite unaffected — frontend/layout-only task, 596 passed.
+
+**Next:** The real verdict is the preview. Open each of the seven test pages and confirm: no sidebar, full-width table, `FocusedBackLink` returns to the session overview (where the sidebar reappears). On Weighing specifically: header starts collapsed, expands/collapses cleanly; panel stays pinned while scrolling a long load sequence; the active row highlights and tracks the panel as you advance; Load column stays visible on a narrow/scrolled table. Confirm the other six tests' entry, computation, and submission are byte-for-byte unchanged — only their header collapsed.
+
+**Open questions:**
+- The active-row highlight and sticky-Load-column treatments are Weighing-only (the only test with the guided panel and the widened table) — whether the other six ever need them depends on whether they get their own guided panels later.
+- The guided-panel pattern (shared readings hook + cursor-driven panel) is still Weighing-only — extending it to the other six tests is a later task, not attempted here.
+- `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task.
+- Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
+- Whether this nested-rewrite mechanism actually works under Vercel's `services` model — best real-world evidence available, still unconfirmed from primary docs; if it also fails, escalate rather than guess a fifth shape.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.

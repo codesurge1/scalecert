@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 function fmt(value) {
@@ -28,7 +29,15 @@ function cellsFromInitialReadings(initialReadings) {
  * the table, with the actual threshold for THIS instrument called out, not
  * just the generic three-tier text the paper form prints.
  */
-export function SensitivityFormTable({ sessionId, sessionStatus, instrument, checks, observerDefault, initialReadings }) {
+export function SensitivityFormTable({
+  sessionId,
+  sessionStatus,
+  instrument,
+  checks,
+  verificationType,
+  observerDefault,
+  initialReadings,
+}) {
   const disabled = sessionStatus !== "draft";
 
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -82,23 +91,27 @@ export function SensitivityFormTable({ sessionId, sessionStatus, instrument, che
 
   return (
     <div className="grid gap-3">
+      <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} observer={observer}>
+        <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+            <span>OIML R 76-2: 2007 (E)</span>
+            <span>Report page &hellip;./&hellip;.</span>
+          </div>
+
+          <h2 className="text-sm font-bold">4.2&nbsp;&nbsp;&nbsp;SENSITIVITY (non-self-indicating instrument) (A.4.9)</h2>
+
+          <div className="mt-5 grid gap-1.5 text-sm">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+          </div>
+        </div>
+      </CollapsibleFormHeader>
+
       <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-          <span>OIML R 76-2: 2007 (E)</span>
-          <span>Report page &hellip;./&hellip;.</span>
-        </div>
-
-        <h2 className="text-sm font-bold">4.2&nbsp;&nbsp;&nbsp;SENSITIVITY (non-self-indicating instrument) (A.4.9)</h2>
-
-        <div className="mt-5 grid gap-1.5 text-sm">
-          <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-          <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-          <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-          <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-          <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
-        </div>
-
-        <div className="mt-4 overflow-x-auto">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] border-collapse text-xs">
             <thead>
               <tr>

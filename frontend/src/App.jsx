@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthGate } from "@/components/AuthGate";
-import { AppShell } from "@/components/AppShell";
+import { AppShell, FocusedShell } from "@/components/AppShell";
 import { LoginPage } from "@/pages/LoginPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { InstrumentsListPage } from "@/pages/InstrumentsListPage";
@@ -43,6 +43,14 @@ export default function App() {
           <Route path="/discrepancy-reports" element={<DiscrepancyReportsPage />} />
           <Route path="/audit-trail" element={<AuditTrailPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
+        </Route>
+
+        {/* Focused test-entry mode (docs/architecture.md, Frontend): all
+            seven test-entry screens render inside FocusedShell instead of
+            AppShell — no sidebar, full viewport width for the form table.
+            The only way back is each page's own FocusedBackLink to the
+            session overview above, which IS inside AppShell. */}
+        <Route element={<FocusedShell />}>
           <Route path="/sessions/:id/weighing" element={<WeighingSessionPage />} />
           <Route path="/sessions/:id/zero-tare" element={<ZeroTareSessionPage />} />
           <Route path="/sessions/:id/repeatability" element={<RepeatabilitySessionPage />} />

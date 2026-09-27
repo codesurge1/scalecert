@@ -1,9 +1,11 @@
 import { Fragment, useMemo, useRef, useState } from "react";
 import { FormLine, FormCheckbox } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 import { useWeighingReadings } from "@/hooks/useWeighingReadings";
 import { GuidedEntryPanel } from "@/components/weighing/GuidedEntryPanel";
 import { FORM_COLUMNS } from "@/components/weighing/formColumns";
+import { cn } from "@/lib/utils";
 
 const ZERO_DEVICE_OPTIONS = [
   { value: "non_existent", label: "Non-existent" },
@@ -67,6 +69,7 @@ export function WeighingFormTable({
   sessionStatus,
   instrument,
   sequence,
+  verificationType,
   observerDefault,
   initialReadings,
   actorId,
@@ -182,129 +185,140 @@ export function WeighingFormTable({
   }, [rowVerdicts]);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
-      <div className="grid gap-3">
-        <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-            <span>OIML R 76-2: 2007 (E)</span>
-            <span>Report page &hellip;./&hellip;.</span>
-          </div>
-
-          <h2 className="text-sm font-bold">1&nbsp;&nbsp;&nbsp;WEIGHING PERFORMANCE (A.4.4) (A.5.3.1)</h2>
-          <p className="ml-8 text-sm">(Calculation of the error)</p>
-
-          <div className="mt-5 grid gap-x-8 gap-y-1.5 sm:grid-cols-2">
-            <div className="grid gap-1.5">
-              <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-              <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-              <FormLine label="Date:" value={testDate} editable disabled={disabled} onChange={setTestDate} />
-              <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-              <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-              <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+      <div className="grid gap-3 lg:min-w-0">
+        <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} date={testDate} observer={observer}>
+          <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+            <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+              <span>OIML R 76-2: 2007 (E)</span>
+              <span>Report page &hellip;./&hellip;.</span>
             </div>
 
-            <div>
-              <table className="w-full border-collapse text-xs">
-                <thead>
-                  <tr>
-                    <th className="border border-neutral-900 px-2 py-1" />
-                    {ENV_COLS.map((col) => (
-                      <th key={col.key} className="border border-neutral-900 px-2 py-1 font-normal">
-                        {col.label}
-                      </th>
-                    ))}
-                    <th className="border border-neutral-900 px-1 py-1" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {ENV_ROWS.map((row) => (
-                    <tr key={row.key}>
-                      <td className="border border-neutral-900 px-2 py-1 align-top">
-                        {row.label}
-                        {row.note ? <div className="text-[10px] italic text-neutral-600">{row.note}</div> : null}
-                      </td>
+            <h2 className="text-sm font-bold">1&nbsp;&nbsp;&nbsp;WEIGHING PERFORMANCE (A.4.4) (A.5.3.1)</h2>
+            <p className="ml-8 text-sm">(Calculation of the error)</p>
+
+            <div className="mt-5 grid gap-x-8 gap-y-1.5 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+                <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+                <FormLine label="Date:" value={testDate} editable disabled={disabled} onChange={setTestDate} />
+                <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+                <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+                <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+              </div>
+
+              <div>
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr>
+                      <th className="border border-neutral-900 px-2 py-1" />
                       {ENV_COLS.map((col) => (
-                        <td key={col.key} className="border border-neutral-900 p-0">
-                          <input
-                            className="h-6 w-full border-0 bg-transparent px-1 text-center text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
-                            disabled={disabled}
-                            value={env[col.key][row.key]}
-                            onChange={(event) =>
-                              setEnv((prev) => ({
-                                ...prev,
-                                [col.key]: { ...prev[col.key], [row.key]: event.target.value },
-                              }))
-                            }
-                          />
-                        </td>
+                        <th key={col.key} className="border border-neutral-900 px-2 py-1 font-normal">
+                          {col.label}
+                        </th>
                       ))}
-                      <td className="border border-neutral-900 px-1 py-1">{row.unit}</td>
+                      <th className="border border-neutral-900 px-1 py-1" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {ENV_ROWS.map((row) => (
+                      <tr key={row.key}>
+                        <td className="border border-neutral-900 px-2 py-1 align-top">
+                          {row.label}
+                          {row.note ? <div className="text-[10px] italic text-neutral-600">{row.note}</div> : null}
+                        </td>
+                        {ENV_COLS.map((col) => (
+                          <td key={col.key} className="border border-neutral-900 p-0">
+                            <input
+                              className="h-6 w-full border-0 bg-transparent px-1 text-center text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+                              disabled={disabled}
+                              value={env[col.key][row.key]}
+                              onChange={(event) =>
+                                setEnv((prev) => ({
+                                  ...prev,
+                                  [col.key]: { ...prev[col.key], [row.key]: event.target.value },
+                                }))
+                              }
+                            />
+                          </td>
+                        ))}
+                        <td className="border border-neutral-900 px-1 py-1">{row.unit}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
 
-          <div className="mt-5">
-            <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
-            <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
-              {ZERO_DEVICE_OPTIONS.map((opt) => (
-                <FormCheckbox
-                  key={opt.value}
-                  label={opt.label}
-                  checked={zeroDeviceStatus === opt.value}
-                  onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
-                />
-              ))}
+            <div className="mt-5">
+              <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+              <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
+                {ZERO_DEVICE_OPTIONS.map((opt) => (
+                  <FormCheckbox
+                    key={opt.value}
+                    label={opt.label}
+                    checked={zeroDeviceStatus === opt.value}
+                    onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2">
-            <p className="text-sm">Initial zero-setting &gt; 20 % of Max:</p>
-            <FormCheckbox
-              label="Yes"
-              checked={initialZeroOver20 === "yes"}
-              onClick={() => !disabled && setInitialZeroOver20("yes")}
-            />
-            <FormCheckbox
-              label="No  (see R 76-1, A.4.4.2)"
-              checked={initialZeroOver20 === "no"}
-              onClick={() => !disabled && setInitialZeroOver20("no")}
-            />
-          </div>
-
-          <div className="mt-5 text-sm">
-            <p>
-              <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>
-            </p>
-            <p>
-              <i>E</i>
-              <sub>c</sub> = <i>E</i> − <i>E</i>
-              <sub>0</sub> with <i>E</i>
-              <sub>0</sub> = error calculated at or near zero*
-            </p>
-            <div className="mt-1 flex items-baseline gap-2 text-xs text-neutral-700">
-              <span>
-                * <i>E</i>
-                <sub>0</sub> =
-              </span>
-              <input
-                className="w-24 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-center focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
-                inputMode="decimal"
-                disabled={disabled}
-                value={e0}
-                onChange={(event) => setE0(event.target.value)}
+            <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+              <p className="text-sm">Initial zero-setting &gt; 20 % of Max:</p>
+              <FormCheckbox
+                label="Yes"
+                checked={initialZeroOver20 === "yes"}
+                onClick={() => !disabled && setInitialZeroOver20("yes")}
               />
-              <span>g — entered here; no dedicated zero-capture step yet (tracked gap).</span>
+              <FormCheckbox
+                label="No  (see R 76-1, A.4.4.2)"
+                checked={initialZeroOver20 === "no"}
+                onClick={() => !disabled && setInitialZeroOver20("no")}
+              />
+            </div>
+
+            <div className="mt-5 text-sm">
+              <p>
+                <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>
+              </p>
+              <p>
+                <i>E</i>
+                <sub>c</sub> = <i>E</i> − <i>E</i>
+                <sub>0</sub> with <i>E</i>
+                <sub>0</sub> = error calculated at or near zero*
+              </p>
+              <div className="mt-1 flex items-baseline gap-2 text-xs text-neutral-700">
+                <span>
+                  * <i>E</i>
+                  <sub>0</sub> =
+                </span>
+                <input
+                  className="w-24 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-center focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
+                  inputMode="decimal"
+                  disabled={disabled}
+                  value={e0}
+                  onChange={(event) => setE0(event.target.value)}
+                />
+                <span>g — entered here; no dedicated zero-capture step yet (tracked gap).</span>
+              </div>
             </div>
           </div>
+        </CollapsibleFormHeader>
 
-          <div className="mt-4 overflow-x-auto">
+        {/* The workstation part: full remaining column width (no max-w
+            cap, unlike the header sheet above) — reclaimed specifically so
+            all 10 data columns + mpe are comfortably visible next to the
+            320px guided panel, per docs/architecture.md's focused
+            test-entry mode. The Load column is sticky within the
+            scrollable table container so it stays in view when the table
+            scrolls horizontally on a narrower screen. */}
+        <div className="w-full border-2 border-neutral-900 bg-white p-4 font-serif text-neutral-900 sm:p-6">
+          <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse text-xs">
               <thead>
                 <tr>
-                  <th rowSpan={2} className="border border-neutral-900 px-2 py-1 align-middle">
+                  <th rowSpan={2} className="sticky left-0 z-10 border border-neutral-900 bg-neutral-50 px-2 py-1 align-middle">
                     Load, <i>L</i>
                   </th>
                   <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
@@ -336,24 +350,38 @@ export function WeighingFormTable({
                 </tr>
               </thead>
               <tbody>
-                {sequence.map((entry) => (
-                  <tr key={entry.sequence_no}>
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(entry.L)}</td>
-                    {FORM_COLUMNS.map((col) => (
-                      <Fragment key={`I-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "indication")}</Fragment>
-                    ))}
-                    {FORM_COLUMNS.map((col) => (
-                      <Fragment key={`dL-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "deltaL")}</Fragment>
-                    ))}
-                    {FORM_COLUMNS.map((col) => (
-                      <Fragment key={`E-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "E")}</Fragment>
-                    ))}
-                    {FORM_COLUMNS.map((col) => (
-                      <Fragment key={`Ec-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "Ec")}</Fragment>
-                    ))}
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.mpe)}</td>
-                  </tr>
-                ))}
+                {sequence.map((entry) => {
+                  // Active-row highlight — keeps the panel and table
+                  // mentally connected: whichever load the guided panel is
+                  // currently pointed at is visually obvious in the table,
+                  // not just named in the panel's own progress line.
+                  const isActive = cursor?.sequenceNo === entry.sequence_no;
+                  return (
+                    <tr key={entry.sequence_no} className={cn(isActive && "bg-amber-50")}>
+                      <td
+                        className={cn(
+                          "sticky left-0 z-10 border border-neutral-900 px-2 py-1 text-right",
+                          isActive ? "bg-amber-100 font-semibold" : "bg-white",
+                        )}
+                      >
+                        {roundLoadForDisplay(entry.L)}
+                      </td>
+                      {FORM_COLUMNS.map((col) => (
+                        <Fragment key={`I-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "indication")}</Fragment>
+                      ))}
+                      {FORM_COLUMNS.map((col) => (
+                        <Fragment key={`dL-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "deltaL")}</Fragment>
+                      ))}
+                      {FORM_COLUMNS.map((col) => (
+                        <Fragment key={`E-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "E")}</Fragment>
+                      ))}
+                      {FORM_COLUMNS.map((col) => (
+                        <Fragment key={`Ec-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "Ec")}</Fragment>
+                      ))}
+                      <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.mpe)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -385,7 +413,7 @@ export function WeighingFormTable({
           </div>
         </div>
 
-        <p className="mx-auto max-w-4xl text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Reproduced for data-entry fidelity to OIML R 76-2's page-10 "Weighing performance" form —
           not a copy of the copyrighted OIML document itself. Header fields above (Date, Observer,
           environmental conditions, zero-device status, initial-zero-setting flag, Remarks) are local
@@ -394,6 +422,12 @@ export function WeighingFormTable({
         </p>
       </div>
 
+      {/* Sticky, not just positioned once — stays in view while the table
+          above scrolls, per docs/architecture.md's focused test-entry mode
+          ("the guided panel must never scroll out of reach mid-entry").
+          `self-start` (via the parent's `lg:items-start`) keeps it from
+          stretching to the table's full height, which would otherwise
+          defeat `sticky` entirely. */}
       <div className="lg:sticky lg:top-4">
         <GuidedEntryPanel
           sequence={sequence}

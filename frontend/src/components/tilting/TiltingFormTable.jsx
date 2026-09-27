@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormBox, FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
@@ -43,7 +44,7 @@ function cellsFromState(state) {
  * every submission replaces the entire local state with the fresh,
  * server-recomputed TiltingStateOut the POST returns.
  */
-export function TiltingFormTable({ sessionId, sessionStatus, instrument, initialState, observerDefault }) {
+export function TiltingFormTable({ sessionId, sessionStatus, instrument, initialState, verificationType, observerDefault }) {
   const disabled = sessionStatus !== "draft";
 
   const [state, setState] = useState(initialState);
@@ -229,54 +230,58 @@ export function TiltingFormTable({ sessionId, sessionStatus, instrument, initial
 
   return (
     <div className="grid gap-3">
-      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-          <span>OIML R 76-2: 2007 (E)</span>
-          <span>Report page &hellip;./&hellip;.</span>
-        </div>
-
-        <h2 className="text-sm font-bold">8&nbsp;&nbsp;&nbsp;TILTING (A.5.1, A.5.1.1-A.5.1.3)</h2>
-        <p className="ml-8 text-xs italic text-neutral-600">
-          Minimal 8.3.3/4.18 slice — reference + 4 tilted positions, unloaded and at two loads (a mid load and
-          Max), not the full Annex A.5.1 5-position × N-cycle battery.
-        </p>
-
-        <div className="mt-5 grid gap-1.5 text-sm">
-          <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-          <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-          <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-          <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-          <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
-        </div>
-
-        <div className="mt-4">
-          <FormBox label="Limiting value of tilting" value={limitingTiltValue} editable disabled={disabled} onChange={setLimitingTiltValue} width="w-28" />
-        </div>
-
-        <div className="mt-4">
-          <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
-          <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
-            {ZERO_DEVICE_OPTIONS.map((opt) => (
-              <FormCheckbox
-                key={opt.value}
-                label={opt.label}
-                checked={zeroDeviceStatus === opt.value}
-                onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
-              />
-            ))}
+      <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} observer={observer}>
+        <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+            <span>OIML R 76-2: 2007 (E)</span>
+            <span>Report page &hellip;./&hellip;.</span>
           </div>
+
+          <h2 className="text-sm font-bold">8&nbsp;&nbsp;&nbsp;TILTING (A.5.1, A.5.1.1-A.5.1.3)</h2>
+          <p className="ml-8 text-xs italic text-neutral-600">
+            Minimal 8.3.3/4.18 slice — reference + 4 tilted positions, unloaded and at two loads (a mid load and
+            Max), not the full Annex A.5.1 5-position × N-cycle battery.
+          </p>
+
+          <div className="mt-5 grid gap-1.5 text-sm">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+          </div>
+
+          <div className="mt-4">
+            <FormBox label="Limiting value of tilting" value={limitingTiltValue} editable disabled={disabled} onChange={setLimitingTiltValue} width="w-28" />
+          </div>
+
+          <div className="mt-4">
+            <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+            <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
+              {ZERO_DEVICE_OPTIONS.map((opt) => (
+                <FormCheckbox
+                  key={opt.value}
+                  label={opt.label}
+                  checked={zeroDeviceStatus === opt.value}
+                  onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-4 text-sm">
+            <i>E</i>
+            <sub>v</sub> = <i>I</i>
+            <sub>v</sub> + ½ <i>e</i> − Δ<i>L</i>
+            <sub>v</sub> − <i>L</i> (v = 1, 2, 3, 4, 5); <i>E</i>
+            <sub>cv</sub> = <i>E</i>
+            <sub>v</sub> − <i>E</i>
+            <sub>v0</sub>
+          </p>
         </div>
+      </CollapsibleFormHeader>
 
-        <p className="mt-4 text-sm">
-          <i>E</i>
-          <sub>v</sub> = <i>I</i>
-          <sub>v</sub> + ½ <i>e</i> − Δ<i>L</i>
-          <sub>v</sub> − <i>L</i> (v = 1, 2, 3, 4, 5); <i>E</i>
-          <sub>cv</sub> = <i>E</i>
-          <sub>v</sub> − <i>E</i>
-          <sub>v0</sub>
-        </p>
-
+      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
         {PHASES.map(phaseTable)}
 
         <div className="mt-5">
