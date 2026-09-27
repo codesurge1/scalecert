@@ -110,7 +110,7 @@ export function SensitivityFormTable({
         </div>
       </CollapsibleFormHeader>
 
-      <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+      <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-3 font-serif text-neutral-900 sm:p-4">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] border-collapse text-xs">
             <thead>
@@ -151,7 +151,7 @@ export function SensitivityFormTable({
           </table>
         </div>
 
-        <div className="mt-5 text-sm">
+        <div className="mt-3 text-sm">
           <p>Check if the permanent displacement is equal to or greater than:</p>
           <ul className="ml-6 mt-1 list-disc">
             <li className={thresholdMm === "1" ? "font-semibold" : ""}>1 mm for an instrument of accuracy class I or II</li>
@@ -173,10 +173,10 @@ export function SensitivityFormTable({
           </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           <p className="text-sm">Remarks:</p>
           <textarea
-            className="mt-1 min-h-14 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+            className="mt-1 min-h-10 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
             disabled={disabled}
             value={remarks}
             onChange={(event) => setRemarks(event.target.value)}

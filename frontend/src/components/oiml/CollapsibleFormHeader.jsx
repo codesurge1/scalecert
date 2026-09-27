@@ -27,7 +27,7 @@ export function CollapsibleFormHeader({ instrument, verificationType, date, obse
 
   return (
     <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border bg-card px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border bg-card px-3 py-1.5 text-xs">
         <span className="font-semibold text-foreground">
           {instrument?.type_designation || instrument?.model || "Instrument"}
         </span>

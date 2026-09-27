@@ -48,8 +48,9 @@ export default function App() {
         {/* Focused test-entry mode (docs/architecture.md, Frontend): all
             seven test-entry screens render inside FocusedShell instead of
             AppShell — no sidebar, full viewport width for the form table.
-            The only way back is each page's own FocusedBackLink to the
-            session overview above, which IS inside AppShell. */}
+            The only way back is each page's own FocusedPageHeader (the
+            merged back-link + title row) to the session overview above,
+            which IS inside AppShell. */}
         <Route element={<FocusedShell />}>
           <Route path="/sessions/:id/weighing" element={<WeighingSessionPage />} />
           <Route path="/sessions/:id/zero-tare" element={<ZeroTareSessionPage />} />

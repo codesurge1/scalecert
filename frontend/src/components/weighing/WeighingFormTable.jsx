@@ -266,9 +266,25 @@ export function WeighingFormTable({
     // `lg` (the primary keyboard-first entry point shouldn't sit below a
     // potentially long table the technician has to scroll past first),
     // reverting to natural left-table/right-panel order at `lg` and up.
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
-      <div className="order-2 grid min-w-0 gap-3 lg:order-none">
-        <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} date={testDate} observer={observer}>
+    //
+    // `lg:flex lg:h-full lg:min-h-0` (new, `fix/vertical-fit-no-page-scroll`)
+    // — switches this container from `grid` to `flex` ONLY at `lg` (a grid
+    // track's own height stays content-sized even inside an `h-full`
+    // grid container, a well-known CSS Grid gotcha; a flex row's
+    // `align-items: stretch` default makes both columns genuinely fill
+    // the real height `WeighingSessionPage` hands down, no extra utility
+    // needed). Column widths that used to come from `grid-cols-[...]` now
+    // come from the columns' own `lg:flex-1`/`lg:w-[320px]` below. Below
+    // `lg`, `display:grid` (the base class) still applies, unchanged.
+    <div className="grid gap-4 lg:flex lg:h-full lg:min-h-0">
+      <div className="order-2 grid min-w-0 gap-2 lg:order-none lg:flex lg:h-full lg:min-h-0 lg:flex-1 lg:flex-col">
+        {/* `lg:shrink-0` — guarantees this header strip keeps its natural
+            height under the flex column's default shrink behavior, so any
+            space pressure at `lg`+ is absorbed by the table sheet below
+            (the one flex item actually designed to grow/shrink,
+            `lg:flex-1`), never by squeezing this header. */}
+        <div className="lg:shrink-0">
+          <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} date={testDate} observer={observer}>
           <div className="mx-auto w-full max-w-4xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
             <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
               <span>OIML R 76-2: 2007 (E)</span>
@@ -385,7 +401,8 @@ export function WeighingFormTable({
               </div>
             </div>
           </div>
-        </CollapsibleFormHeader>
+          </CollapsibleFormHeader>
+        </div>
 
         {/* The workstation part: full remaining column width (no max-w
             cap, unlike the header sheet above) — reclaimed specifically so
@@ -393,25 +410,37 @@ export function WeighingFormTable({
             320px guided panel, per docs/architecture.md's focused
             test-entry mode. The Load column is sticky within the
             scrollable table container so it stays in view when the table
-            scrolls horizontally on a narrower screen. */}
-        <div className="w-full border-2 border-neutral-900 bg-white p-4 font-serif text-neutral-900 sm:p-6">
+            scrolls horizontally on a narrower screen. Padding cut
+            (`p-4 sm:p-6` -> `p-2 sm:p-3`, `fix/vertical-fit-no-page-scroll`)
+            — this is a workstation control surface now, not a page
+            reproduction, and every reclaimed pixel here is a pixel back
+            for the table's own row-scroll region below. `lg:flex
+            lg:min-h-0 lg:flex-1 lg:flex-col` makes this sheet fill the
+            left column's remaining height at `lg`, so its own children
+            (the table-scroll div, Passed/Failed, Remarks) can divide that
+            real height instead of just stacking to their natural size. */}
+        <div className="w-full border-2 border-neutral-900 bg-white p-2 font-serif text-neutral-900 sm:p-3 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
           {/* `ref={tableWrapRef}` is what useAutoScale measures — this
               wrapper's own clientWidth is "the space the table actually
-              has," which drives `--tscale` below. `overflow-y-auto` +
-              `max-h-[65vh]` (new, alongside the pre-existing
-              `overflow-x-auto`) caps the table's own height rather than the
-              whole page's: on a long load sequence, only the rows scroll,
-              while the header row, the Passed/Failed line, Remarks, and the
-              sticky guided panel all stay in view without hunting. It's a
-              cap, not a forced height — a short table never shows a
-              scrollbar. `<thead>` gets its own `sticky top-0` so both header
-              rows stay pinned to the top of THIS scrolling container as the
-              body scrolls underneath — independent of, and composes cleanly
-              with, the Load column's separate `sticky left-0` (horizontal)
-              below; a focused input still auto-scrolls into view here via
-              the browser's own default focus-scroll behavior, so the guided
-              panel's Escape/Enter navigation needs no changes. */}
-          <div ref={tableWrapRef} className="max-h-[65vh] overflow-auto">
+              has," which drives `--tscale` below. `max-h-[65vh]
+              overflow-auto` (unchanged) is the sub-`lg` behavior — the
+              same cap the previous task set, since below `lg` the page
+              scrolls normally and a hard vh cap is still the right
+              fallback. At `lg`+, `lg:max-h-none lg:min-h-0 lg:flex-1`
+              replaces that guess with the table's REAL remaining height
+              (whatever the sheet above didn't spend on Passed/Failed +
+              Remarks) — on a long load sequence, only these rows scroll,
+              while the header row, Passed/Failed, Remarks, and the guided
+              panel all stay in view without hunting; on a short one, no
+              scrollbar appears at all. `<thead>` gets its own `sticky
+              top-0` so both header rows stay pinned to the top of THIS
+              scrolling container as the body scrolls underneath —
+              independent of, and composes cleanly with, the Load column's
+              separate `sticky left-0` (horizontal) below; a focused input
+              still auto-scrolls into view here via the browser's own
+              default focus-scroll behavior, so the guided panel's
+              Escape/Enter navigation needs no changes. */}
+          <div ref={tableWrapRef} className="max-h-[65vh] overflow-auto lg:max-h-none lg:min-h-0 lg:flex-1">
             <table
               className={cn("w-full border-collapse", SCALE_TEXT)}
               style={{ "--tscale": tableScale, minWidth: `${TABLE_NATURAL_WIDTH * TABLE_SCALE_FLOOR}px` }}
@@ -499,7 +528,7 @@ export function WeighingFormTable({
             </table>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-3 shrink-0">
             <p className="text-sm">
               Check if |<i>E</i>
               <sub>c</sub>| ≤ |mpe|
@@ -515,10 +544,10 @@ export function WeighingFormTable({
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-3 shrink-0">
             <p className="text-sm">Remarks:</p>
             <textarea
-              className="mt-1 min-h-16 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+              className="mt-1 min-h-10 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
               disabled={disabled}
               value={remarks}
               onChange={(event) => setRemarks(event.target.value)}
@@ -526,7 +555,7 @@ export function WeighingFormTable({
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground">
+        <p className="shrink-0 text-xs text-muted-foreground">
           Reproduced for data-entry fidelity to OIML R 76-2's page-10 "Weighing performance" form —
           not a copy of the copyrighted OIML document itself. Header fields above (Date, Observer,
           environmental conditions, zero-device status, initial-zero-setting flag, Remarks) are local
@@ -535,19 +564,27 @@ export function WeighingFormTable({
         </p>
       </div>
 
-      {/* Sticky, not just positioned once — stays in view while the table
-          above scrolls, per docs/architecture.md's focused test-entry mode
-          ("the guided panel must never scroll out of reach mid-entry").
-          `self-start` (via the parent's `lg:items-start`) keeps it from
-          stretching to the table's full height, which would otherwise
-          defeat `sticky` entirely. `order-1`/`lg:order-none` puts it above
-          the table when stacked (see the comment on the grid container).
-          `max-w-xl`/`lg:max-w-none` keeps it from stretching edge-to-edge
-          on a tablet-width screen still below `lg` (a real sidebar-style
-          control surface shouldn't span 900px just because it's stacked) —
-          full-bleed is still fine on a genuinely narrow phone, where
-          max-w-xl (36rem) never actually constrains anything. */}
-      <div className="order-1 mx-auto w-full min-w-0 max-w-xl lg:order-none lg:sticky lg:top-4 lg:max-w-none">
+      {/* `order-1`/`lg:order-none` puts the panel above the table when
+          stacked (see the comment on the outer container). `max-w-xl`/
+          `lg:max-w-none` keeps it from stretching edge-to-edge on a
+          tablet-width screen still below `lg` — full-bleed is still fine
+          on a genuinely narrow phone, where max-w-xl (36rem) never
+          actually constrains anything.
+          `lg:sticky lg:top-4` (the previous task's page-scroll-era
+          treatment) is GONE at `lg`+, replaced by `lg:h-full lg:w-[320px]
+          lg:shrink-0 lg:overflow-y-auto` (`fix/vertical-fit-no-page-scroll`)
+          — the page no longer scrolls at `lg`+ (FocusedShell), so `sticky`
+          has nothing to stick against; instead the panel fills the exact
+          height its sibling column fills (flex `align-items: stretch`,
+          the parent's default) and scrolls INTERNALLY if its own content
+          (title, applied-load box, input, adjust buttons, Previous/Next,
+          "Last recorded," footer text — in that DOM order) doesn't fit.
+          Because the input + adjust buttons + Next button sit earlier in
+          that order than "Last recorded"/the footer text, a plain
+          top-anchored `overflow-y-auto` already keeps the primary controls
+          visible first and lets only the lower-priority content require a
+          scroll — no reordering needed to satisfy that priority. */}
+      <div className="order-1 mx-auto w-full min-w-0 max-w-xl lg:order-none lg:mx-0 lg:h-full lg:w-[320px] lg:min-h-0 lg:max-w-none lg:shrink-0 lg:overflow-y-auto">
         <GuidedEntryPanel
           sequence={sequence}
           instrument={instrument}

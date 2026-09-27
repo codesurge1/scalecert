@@ -228,13 +228,13 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
         </div>
       </CollapsibleFormHeader>
 
-      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+      <div className="mx-auto w-full max-w-5xl border-2 border-neutral-900 bg-white p-3 font-serif text-neutral-900 sm:p-4">
         <div className="grid gap-6 overflow-x-auto sm:grid-cols-2">
           {seriesTable(1, 0)}
           {seriesTable(2, ROWS_PER_SERIES)}
         </div>
 
-        <div className="mt-6">
+        <div className="mt-3">
           <p className="text-sm">
             Check if a) <i>E</i> ≤ mpe (3.6 of R 76-1); b) <i>E</i>
             <sub>max</sub> − <i>E</i>
@@ -249,10 +249,10 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
           </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           <p className="text-sm">Remarks:</p>
           <textarea
-            className="mt-1 min-h-14 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
+            className="mt-1 min-h-10 w-full border border-neutral-900 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
             disabled={disabled}
             value={remarks}
             onChange={(event) => setRemarks(event.target.value)}
