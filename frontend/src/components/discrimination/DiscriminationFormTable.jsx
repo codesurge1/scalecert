@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 function fmt(value) {
   return value === undefined || value === null || value === "" ? "" : value;
@@ -111,7 +112,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
             const colorClass = cell.result ? (cell.result.passed ? "text-emerald-700" : "text-red-700 font-semibold") : "text-neutral-500";
             return (
               <tr key={check.sequence_no}>
-                <td className="border border-neutral-900 px-2 py-1 text-right">{check.L}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(check.L)}</td>
                 <td className="border border-neutral-900 p-0">
                   <input
                     className="h-7 w-full border-0 bg-transparent px-1 text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
@@ -121,7 +122,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
                     onChange={(event) => updateCell(check.sequence_no, { I1: event.target.value })}
                   />
                 </td>
-                <td className="border border-neutral-900 px-2 py-1 text-right">{fmt(cell.result?.mpe ?? check.mpe)}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(cell.result?.mpe ?? check.mpe)}</td>
                 <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
                   <input
                     className={`h-7 w-full border-0 bg-transparent px-1 text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60 ${cell.error ? "bg-red-50" : ""}`}
@@ -134,7 +135,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
                   />
                 </td>
                 <td className={`border border-neutral-900 px-2 py-1 text-center ${colorClass}`}>
-                  {cell.submitting ? "…" : fmt(cell.result?.difference)}
+                  {cell.submitting ? "…" : roundForDisplay(cell.result?.difference)}
                 </td>
               </tr>
             );
@@ -159,8 +160,8 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
             const cell = getCell(check.sequence_no);
             return (
               <tr key={check.sequence_no}>
-                <td className="border border-neutral-900 px-2 py-1 text-right">{check.L}</td>
-                <td className="border border-neutral-900 px-2 py-1 text-right">{fmt(cell.result?.extra_load ?? check.mpe)}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(check.L)}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(cell.result?.extra_load ?? check.mpe)}</td>
                 <td className="border border-neutral-900 px-2 py-1">
                   <div className="flex justify-center gap-6">
                     <FormCheckbox
@@ -214,7 +215,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
             const colorClass = cell.result ? (cell.result.passed ? "text-emerald-700" : "text-red-700 font-semibold") : "text-neutral-500";
             return (
               <tr key={check.sequence_no}>
-                <td className="border border-neutral-900 px-2 py-1 text-right">{check.L}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(check.L)}</td>
                 <td className="border border-neutral-900 p-0">
                   <input
                     className="h-7 w-full border-0 bg-transparent px-1 text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60"
@@ -230,7 +231,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
                     the established "blank paper form" convention. */}
                 <td className="border border-neutral-900 px-2 py-1" />
                 <td className="border border-neutral-900 px-2 py-1" />
-                <td className="border border-neutral-900 px-2 py-1 text-right">{fmt(cell.result?.d)}</td>
+                <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(cell.result?.d)}</td>
                 <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
                   <input
                     className={`h-7 w-full border-0 bg-transparent px-1 text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60 ${cell.error ? "bg-red-50" : ""}`}
@@ -243,7 +244,7 @@ export function DiscriminationFormTable({ sessionId, sessionStatus, instrument, 
                   />
                 </td>
                 <td className={`border border-neutral-900 px-2 py-1 text-center ${colorClass}`}>
-                  {cell.submitting ? "…" : fmt(cell.result?.difference)}
+                  {cell.submitting ? "…" : roundForDisplay(cell.result?.difference)}
                 </td>
               </tr>
             );

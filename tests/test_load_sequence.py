@@ -127,7 +127,9 @@ def test_fill_count_matches_shortfall_with_four_anchors():
 def test_typical_class_iii_instrument_reaches_target_of_ten():
     # e=10, Max=30000, Min=200 -> anchors: Max(30000), Min(200), and both
     # in-range band transitions (5000, 20000) = 4 anchors; six fills needed
-    # to reach the target of 10.
+    # to reach the target of 10. This is the project's own "demo instrument"
+    # (docs/architecture.md) — its exact fill values are asserted below,
+    # not just their count, specifically to lock in the round-load fix.
     sequence = generate_load_sequence(
         accuracy_class=AccuracyClass.III,
         e=D("10"),
@@ -156,6 +158,19 @@ def test_typical_class_iii_instrument_reaches_target_of_ten():
     assert by_L[D("5000")].kind is LoadKind.BAND_TRANSITION
     assert by_L[D("20000")].kind is LoadKind.BAND_TRANSITION
 
+    # The anchors are exact and untouched by the fill-strategy change.
+    assert {entry.L for entry in anchors} == {D("30000"), D("200"), D("5000"), D("20000")}
+
+    # The fills are now ROUND values — deterministic multiples of a "nice"
+    # step (500, this instrument's Band 1 span/count works out to a 500g
+    # step) — never the repeating-decimal fractions
+    # (885.714285714285714285714286, ...) the old even-fractional-spacing
+    # strategy produced for a span/count combination like this one.
+    fill_loads = {entry.L for entry in fills}
+    assert fill_loads == {D("500"), D("1500"), D("2000"), D("3000"), D("3500"), D("4500")}
+    for fill in fills:
+        assert fill.L == fill.L.to_integral_value(), f"{fill.L} is not a round whole number"
+
     # Same inputs -> same output, every time.
     again = generate_load_sequence(
         accuracy_class=AccuracyClass.III,
@@ -165,6 +180,93 @@ def test_typical_class_iii_instrument_reaches_target_of_ten():
         verification_type=VerificationType.INITIAL,
     )
     assert [entry.L for entry in again] == loads
+
+
+# ---------------------------------------------------------------------------
+# Round-fill fix: fills must snap to realistic, round load values — never
+# the repeating-decimal fractions (885.714285714285714285714286, ...) the
+# old even-fractional-spacing strategy produced. Anchors stay exactly as
+# sourced; only the FILL points change.
+# ---------------------------------------------------------------------------
+def test_fills_are_round_whole_numbers_not_repeating_decimals():
+    # Max=6200, e=1, no Min -> anchors: Max(6200) + both in-range transitions
+    # (500, 2000) = 3 anchors; 7 fills needed, spread across [0, 500) — a
+    # span/count combination (500/8 = 62.5) that under the OLD fractional
+    # strategy would have produced eighths (62.5, 125, 187.5, ...).
+    sequence = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("1"),
+        max_capacity=D("6200"),
+        min_capacity=None,
+        verification_type=VerificationType.INITIAL,
+    )
+    fills = _by_kind(sequence, LoadKind.FILL)
+    assert len(fills) == 7
+    for fill in fills:
+        assert fill.L == fill.L.to_integral_value(), f"{fill.L} is not a round whole number"
+        assert not fill.is_anchor
+
+
+def test_fills_never_collide_with_or_duplicate_anchors():
+    sequence = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("10"),
+        max_capacity=D("30000"),
+        min_capacity=D("200"),
+        verification_type=VerificationType.INITIAL,
+    )
+    anchor_loads = {entry.L for entry in sequence if entry.is_anchor}
+    fill_loads = [entry.L for entry in sequence if not entry.is_anchor]
+    assert anchor_loads.isdisjoint(fill_loads)
+    assert len(fill_loads) == len(set(fill_loads))  # fills distinct from each other too
+
+
+def test_fills_stay_strictly_inside_band_1():
+    # Band 1 for Class III ends at m=500 -> L=500 (e=1) — every fill must be
+    # strictly below that, and strictly above the lower bound (Min, here).
+    sequence = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("1"),
+        max_capacity=D("5000"),
+        min_capacity=D("10"),
+        verification_type=VerificationType.INITIAL,
+    )
+    fills = _by_kind(sequence, LoadKind.FILL)
+    assert len(fills) > 0
+    for fill in fills:
+        assert D("10") < fill.L < D("500")
+
+
+def test_round_fill_still_reaches_target_when_whole_range_is_band_1():
+    # Max=300 (no Min) sits entirely inside Band 1 (first transition is
+    # 500) -> only one anchor; the round-step fix must still reach the
+    # target of 10 loads, same as the old fractional strategy did.
+    sequence = generate_load_sequence(
+        accuracy_class=AccuracyClass.III,
+        e=D("1"),
+        max_capacity=D("300"),
+        min_capacity=None,
+        verification_type=VerificationType.INITIAL,
+    )
+    assert len(sequence) == MIN_VERIFICATION_LOAD_COUNT
+    fills = _by_kind(sequence, LoadKind.FILL)
+    assert len(fills) == MIN_VERIFICATION_LOAD_COUNT - 1
+    for fill in fills:
+        assert fill.L == fill.L.to_integral_value()
+        assert D("0") < fill.L < D("300")
+
+
+def test_round_fill_is_deterministic():
+    kwargs = dict(
+        accuracy_class=AccuracyClass.III,
+        e=D("1"),
+        max_capacity=D("6200"),
+        min_capacity=None,
+        verification_type=VerificationType.INITIAL,
+    )
+    first = [entry.L for entry in generate_load_sequence(**kwargs)]
+    second = [entry.L for entry in generate_load_sequence(**kwargs)]
+    assert first == second
 
 
 # ---------------------------------------------------------------------------

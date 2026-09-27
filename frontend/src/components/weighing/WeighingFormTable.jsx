@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormLine, FormCheckbox } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 // Direction mapping — explicit and intentional, do not "simplify" this away.
 // The OIML R 76-2 form prints two sub-columns per quantity, headed with the
@@ -228,7 +229,7 @@ export function WeighingFormTable({
       : "text-neutral-500";
     return (
       <td className={`border border-neutral-900 px-1 py-1 text-center text-xs ${colorClass}`}>
-        {cell.submitting ? "…" : fmt(value)}
+        {cell.submitting ? "…" : roundForDisplay(value)}
       </td>
     );
   }
@@ -389,7 +390,7 @@ export function WeighingFormTable({
             <tbody>
               {sequence.map((entry) => (
                 <tr key={entry.sequence_no}>
-                  <td className="border border-neutral-900 px-2 py-1 text-right">{entry.L}</td>
+                  <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(entry.L)}</td>
                   {FORM_COLUMNS.map((col) => (
                     <Fragment key={`I-${col.apiDirection}`}>{inputCell(entry, col.apiDirection, "indication")}</Fragment>
                   ))}
@@ -402,7 +403,7 @@ export function WeighingFormTable({
                   {FORM_COLUMNS.map((col) => (
                     <Fragment key={`Ec-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "Ec")}</Fragment>
                   ))}
-                  <td className="border border-neutral-900 px-2 py-1 text-right">{entry.mpe}</td>
+                  <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.mpe)}</td>
                 </tr>
               ))}
             </tbody>

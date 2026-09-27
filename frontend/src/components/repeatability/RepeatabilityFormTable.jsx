@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormBox, FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
   { value: "non_existent", label: "Non-existent" },
@@ -124,7 +125,7 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
     const s = seriesState[seriesNo];
     return (
       <div>
-        <FormBox label={`Load (weighing ${rowOffset + 1}-${rowOffset + ROWS_PER_SERIES})`} value={fmt(s?.L)} width="w-28" />
+        <FormBox label={`Load (weighing ${rowOffset + 1}-${rowOffset + ROWS_PER_SERIES})`} value={roundLoadForDisplay(s?.L)} width="w-28" />
         <table className="mt-2 w-full border-collapse text-xs">
           <thead>
             <tr>
@@ -170,7 +171,7 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
                     />
                   </td>
                   <td className={`border border-neutral-900 px-2 py-1 text-center ${colorClass}`}>
-                    {cell.submitting ? "…" : fmt(readingOut?.E)}
+                    {cell.submitting ? "…" : roundForDisplay(readingOut?.E)}
                   </td>
                 </tr>
               );
@@ -178,8 +179,8 @@ export function RepeatabilityFormTable({ sessionId, sessionStatus, instrument, s
           </tbody>
         </table>
         <div className="mt-2 flex flex-col gap-1 text-xs">
-          <FormBox label={`Emax − Emin (weighing ${rowOffset + 1}-${rowOffset + ROWS_PER_SERIES})`} value={fmt(s?.spread)} width="w-24" />
-          <FormBox label="mpe" value={fmt(s?.mpe)} width="w-24" />
+          <FormBox label={`Emax − Emin (weighing ${rowOffset + 1}-${rowOffset + ROWS_PER_SERIES})`} value={roundForDisplay(s?.spread)} width="w-24" />
+          <FormBox label="mpe" value={roundForDisplay(s?.mpe)} width="w-24" />
         </div>
       </div>
     );

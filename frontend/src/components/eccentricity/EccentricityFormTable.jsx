@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
   { value: "non_existent", label: "Non-existent" },
@@ -201,7 +202,7 @@ export function EccentricityFormTable({ sessionId, sessionStatus, instrument, se
                         onChange={(event) => updateCell(positionNo, { e0: event.target.value })}
                       />
                     </td>
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{fmt(setup?.L)}</td>
+                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(setup?.L)}</td>
                     <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
                       <input
                         className={`h-7 w-full border-0 bg-transparent px-1 text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60 ${cell.error ? "bg-red-50" : ""}`}
@@ -224,12 +225,12 @@ export function EccentricityFormTable({ sessionId, sessionStatus, instrument, se
                       />
                     </td>
                     <td className={`border border-neutral-900 px-2 py-1 text-center ${colorClass}`}>
-                      {cell.submitting ? "…" : fmt(cell.result?.E)}
+                      {cell.submitting ? "…" : roundForDisplay(cell.result?.E)}
                     </td>
                     <td className={`border border-neutral-900 px-2 py-1 text-center ${colorClass}`}>
-                      {cell.submitting ? "…" : fmt(cell.result?.Ec)}
+                      {cell.submitting ? "…" : roundForDisplay(cell.result?.Ec)}
                     </td>
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{fmt(cell.result?.mpe ?? setup?.mpe)}</td>
+                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(cell.result?.mpe ?? setup?.mpe)}</td>
                   </tr>
                 );
               })}

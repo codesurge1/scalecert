@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 function fmt(value) {
   return value === undefined || value === null || value === "" ? "" : value;
@@ -112,8 +113,8 @@ export function SensitivityFormTable({ sessionId, sessionStatus, instrument, che
                 const colorClass = cell.result ? (cell.result.passed ? "text-emerald-700" : "text-red-700 font-semibold") : "text-neutral-500";
                 return (
                   <tr key={check.sequence_no}>
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{check.L}</td>
-                    <td className="border border-neutral-900 px-2 py-1 text-right">{check.extra_load}</td>
+                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundLoadForDisplay(check.L)}</td>
+                    <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(check.extra_load)}</td>
                     <td className="border border-neutral-900 p-0" title={cell.error ?? undefined}>
                       <div className="flex items-center">
                         <input
@@ -145,7 +146,7 @@ export function SensitivityFormTable({ sessionId, sessionStatus, instrument, che
             <li className={thresholdMm === "5" ? "font-semibold" : ""}>5 mm for an instrument of accuracy class III or IIII with Max &gt; 30 kg</li>
           </ul>
           <p className="mt-1 text-xs text-neutral-600">
-            This instrument (Class {instrument?.accuracy_class}, Max={instrument?.max_capacity}g): threshold = {fmt(thresholdMm)} mm.
+            This instrument (Class {instrument?.accuracy_class}, Max={instrument?.max_capacity}g): threshold = {roundForDisplay(thresholdMm, 0)} mm.
           </p>
         </div>
 
