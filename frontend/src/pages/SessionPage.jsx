@@ -6,19 +6,11 @@ import { useProfile } from "@/hooks/useProfile";
 import { PageHeader } from "@/components/AppShell";
 import { AddTestDialog } from "@/components/session/AddTestDialog";
 import { SessionLifecyclePanel } from "@/components/session/SessionLifecyclePanel";
-import { TEST_ROWS } from "@/lib/testChecklist";
+import { SessionSummaryTable } from "@/components/session/SessionSummaryTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 const VERIFICATION_TYPE_LABELS = {
   initial: "Initial verification",
@@ -42,49 +34,28 @@ function computeProgress(total, completedCount, allPassed) {
   return { status: "complete", verdict: allPassed ? "PASS" : "FAIL" };
 }
 
-function TestStatusBadge({ status, verdict }) {
-  switch (status) {
-    case "loading":
-      return <Skeleton className="h-5 w-24" />;
-    case "na":
-      return <Badge variant="outline">N/A</Badge>;
-    case "not_started":
-      return <Badge variant="outline">Not started</Badge>;
-    case "in_progress":
-      return <Badge variant="warning">In progress</Badge>;
-    case "complete":
-      return (
-        <Badge variant={verdict === "PASS" ? "success" : "destructive"}>
-          Complete — {verdict === "PASS" ? "Pass" : "Fail"}
-        </Badge>
-      );
-    default:
-      return null;
-  }
-}
-
 /**
  * The session overview: instrument -> instrument detail -> THIS PAGE -> a
  * test page, via "Add test" (AddTestDialog) -> pick from the 7 -> that
- * test's table opens. Weighing is always already "added" the moment a
- * session exists (its session_test_selection row is created unconditionally
- * at session creation, docs/architecture.md), so it's listed here directly
- * with live status rather than waiting for a redundant pick; the same is
- * now true for every other test, purely because each has real data to
- * derive status from, not because any of them (Weighing aside) has a
- * session_test_selection row. All seven checklist rows are shown here now
- * (not just the "implemented" subset) — a row whose naReason(instrument)
- * is truthy shows "N/A" instead of a Start/Open button; every other row
- * shows live status. The dialog remains the discovery surface with the
- * same N/A/"Coming soon" distinctions. The verification_type was already
- * chosen once, at session creation (StartVerificationDialog), never
- * re-asked here.
+ * test's table opens. The overview's own centerpiece is now
+ * `SessionSummaryTable` (`feat/oiml-summary-overview`) — a faithful
+ * reproduction of OIML R 76-2's page-9 "Summary of type evaluation" form,
+ * the master ~18-clause checklist, replacing the previous ad hoc
+ * seven-row app-styled table. `PROGRESS_BY_KEY` below is computed exactly
+ * as before (unchanged `computeProgress` shape) and simply handed to that
+ * component, which maps each of this app's seven implemented tests onto
+ * its correct page-9 line and renders every other clause as a clearly
+ * marked "not implemented" placeholder — see `summaryChecklist.js` for
+ * the full row structure and `SessionSummaryTable.jsx` for the status
+ * taxonomy. The dialog (`AddTestDialog`) remains the discovery surface
+ * with the same N/A/"Coming soon" distinctions. The verification_type was
+ * already chosen once, at session creation (StartVerificationDialog),
+ * never re-asked here.
  *
  * No forced sequence (docs/architecture.md, RRSL-confirmed): every
- * Start/Open button below is always enabled and each test's own status
- * (Not started/In progress/Complete) is shown purely for information —
- * nothing here ever reads another test's status to decide a button's
- * enabled state.
+ * applicable test row in the summary table is always clickable regardless
+ * of any other test's status — nothing here ever reads another test's
+ * status to decide a row's clickability.
  */
 export function SessionPage() {
   const { id } = useParams();
@@ -321,53 +292,11 @@ export function SessionPage() {
         />
       ) : null}
 
-      <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Tests added to this session
-        </h2>
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Test</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {/* All seven checklist rows, always. A row's naReason
-                  (instrument-driven, never session/progress state — the
-                  no-forced-sequence guardrail) decides N/A vs. live status;
-                  once a real per-session test selector exists
-                  (docs/plan.md Phase 3), this can additionally reflect
-                  session_test_selection rows, but doesn't need to for any
-                  of this to work today. */}
-              {TEST_ROWS.map((row) => {
-                const naReason = instrument && row.naReason ? row.naReason(instrument) : null;
-                const progress = naReason ? { status: "na" } : PROGRESS_BY_KEY[row.key];
-                return (
-                  <TableRow key={row.key}>
-                    <TableCell>
-                      <div className="font-medium">{row.label}</div>
-                      <div className="text-xs text-muted-foreground">{naReason || row.clause}</div>
-                    </TableCell>
-                    <TableCell>
-                      <TestStatusBadge status={progress.status} verdict={progress.verdict} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {naReason ? null : (
-                        <Button asChild size="sm" variant={progress.status === "not_started" ? "default" : "outline"}>
-                          <Link to={row.route(id)}>{progress.status === "not_started" ? "Start" : "Open"}</Link>
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </Card>
-      </div>
+      {instrument === undefined ? (
+        <Skeleton className="h-96 w-full" />
+      ) : (
+        <SessionSummaryTable sessionId={id} instrument={instrument} progressByKey={PROGRESS_BY_KEY} />
+      )}
     </div>
   );
 }
