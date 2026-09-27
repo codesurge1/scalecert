@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { FormLine, FormCheckbox } from "@/components/oiml/FormPrimitives";
 import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
@@ -53,6 +53,59 @@ function findFirstIncomplete(sequence, cells) {
     }
   }
   return null;
+}
+
+// Auto-scale the main data table down to fit beside the guided panel — real
+// CSS values (font-size/padding/input height, via a computed `--tscale`
+// custom property) rather than a visual `transform: scale()`. A transform
+// was rejected: this table relies on `position: sticky` for its Load column
+// AND the guided panel targets its `<input>`s directly via DOM refs
+// (`inputRefs`, focus()/select()/scrollIntoView-on-focus) — both are exactly
+// the kind of thing a scaled ancestor is known to desync (hit-target
+// coordinates, sticky offset math, focus-scroll math). Scaling real values
+// instead means every input stays its own genuine size/position; only the
+// numbers driving font-size/padding/height change, so click targets, sticky
+// positioning, and DOM-ref focus all keep working unmodified.
+// 720px is the table's own designed width at 1x (10 columns + mpe, matches
+// the table's previous static `min-w-[720px]`) — the "would look right"
+// reference the scale factor is measured against, never exceeded (no
+// upscale on a large monitor). 10/12 is the readability floor: text-xs is
+// 12px, and this table's numbers should never render under ~10px. Below
+// that floor the table stops shrinking and its own `overflow-x-auto`
+// wrapper (unchanged, pre-existing) takes over — the same horizontal-scroll
+// fallback the table already had.
+const TABLE_NATURAL_WIDTH = 720;
+const TABLE_SCALE_FLOOR = 10 / 12;
+
+const SCALE_TEXT = "text-[calc(0.75rem*var(--tscale))]";
+const SCALE_PX2 = "px-[calc(0.5rem*var(--tscale))]";
+const SCALE_PY1 = "py-[calc(0.25rem*var(--tscale))]";
+const SCALE_PX1 = "px-[calc(0.25rem*var(--tscale))]";
+const SCALE_H = "h-[calc(1.75rem*var(--tscale))]";
+
+// Measures the actual rendered width available to the table (the
+// `overflow-x-auto` wrapper's own clientWidth — stable, since that
+// wrapper's width comes from the surrounding grid/flex layout, not from
+// the table's own intrinsic content, so there's no feedback loop with the
+// ResizeObserver below) and turns it into a scale factor, clamped to
+// [floor, 1].
+function useAutoScale(naturalWidth, floor) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (!width) return;
+      setScale(Math.min(1, Math.max(floor, width / naturalWidth)));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [naturalWidth, floor]);
+
+  return { ref, scale };
 }
 
 /**
@@ -116,6 +169,8 @@ export function WeighingFormTable({
   // blur() and leaving focus nowhere.
   const inputRefs = useRef(new Map());
 
+  const { ref: tableWrapRef, scale: tableScale } = useAutoScale(TABLE_NATURAL_WIDTH, TABLE_SCALE_FLOOR);
+
   function inputCell(entry, apiDirection, field) {
     const cell = getCell(entry.sequence_no, apiDirection);
     const key = `${entry.sequence_no}-${apiDirection}-${field}`;
@@ -135,9 +190,13 @@ export function WeighingFormTable({
             if (el) inputRefs.current.set(key, el);
             else inputRefs.current.delete(key);
           }}
-          className={`h-7 w-full border-0 bg-transparent px-1 text-center text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60 ${
-            cell.error ? "bg-red-50" : ""
-          }`}
+          className={cn(
+            SCALE_H,
+            SCALE_PX1,
+            SCALE_TEXT,
+            "w-full border-0 bg-transparent text-center focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900 disabled:opacity-60",
+            cell.error && "bg-red-50",
+          )}
           inputMode="decimal"
           disabled={disabled}
           value={field === "indication" ? cell.indication : cell.deltaL}
@@ -173,7 +232,7 @@ export function WeighingFormTable({
         : "text-red-700 font-semibold"
       : "text-neutral-500";
     return (
-      <td className={`border border-neutral-900 px-1 py-1 text-center text-xs ${colorClass}`}>
+      <td className={cn("border border-neutral-900 text-center", SCALE_PX1, SCALE_PY1, SCALE_TEXT, colorClass)}>
         {cell.submitting ? "…" : roundForDisplay(value)}
       </td>
     );
@@ -336,38 +395,64 @@ export function WeighingFormTable({
             scrollable table container so it stays in view when the table
             scrolls horizontally on a narrower screen. */}
         <div className="w-full border-2 border-neutral-900 bg-white p-4 font-serif text-neutral-900 sm:p-6">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-xs">
-              <thead>
+          {/* `ref={tableWrapRef}` is what useAutoScale measures — this
+              wrapper's own clientWidth is "the space the table actually
+              has," which drives `--tscale` below. `overflow-y-auto` +
+              `max-h-[65vh]` (new, alongside the pre-existing
+              `overflow-x-auto`) caps the table's own height rather than the
+              whole page's: on a long load sequence, only the rows scroll,
+              while the header row, the Passed/Failed line, Remarks, and the
+              sticky guided panel all stay in view without hunting. It's a
+              cap, not a forced height — a short table never shows a
+              scrollbar. `<thead>` gets its own `sticky top-0` so both header
+              rows stay pinned to the top of THIS scrolling container as the
+              body scrolls underneath — independent of, and composes cleanly
+              with, the Load column's separate `sticky left-0` (horizontal)
+              below; a focused input still auto-scrolls into view here via
+              the browser's own default focus-scroll behavior, so the guided
+              panel's Escape/Enter navigation needs no changes. */}
+          <div ref={tableWrapRef} className="max-h-[65vh] overflow-auto">
+            <table
+              className={cn("w-full border-collapse", SCALE_TEXT)}
+              style={{ "--tscale": tableScale, minWidth: `${TABLE_NATURAL_WIDTH * TABLE_SCALE_FLOOR}px` }}
+            >
+              <thead className="sticky top-0 z-20 bg-white">
                 <tr>
                   <th
                     rowSpan={2}
-                    className="sticky left-0 z-10 border border-neutral-900 bg-neutral-50 px-2 py-1 align-middle shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]"
+                    className={cn(
+                      "sticky left-0 z-10 border border-neutral-900 bg-neutral-50 align-middle shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]",
+                      SCALE_PX2,
+                      SCALE_PY1,
+                    )}
                   >
                     Load, <i>L</i>
                   </th>
-                  <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  <th colSpan={2} className={cn("border border-neutral-900 bg-white font-normal", SCALE_PX2, SCALE_PY1)}>
                     Indication, <i>I</i>
                   </th>
-                  <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  <th colSpan={2} className={cn("border border-neutral-900 bg-white font-normal", SCALE_PX2, SCALE_PY1)}>
                     Add. load,
                     <br />Δ<i>L</i>
                   </th>
-                  <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  <th colSpan={2} className={cn("border border-neutral-900 bg-white font-normal", SCALE_PX2, SCALE_PY1)}>
                     Error, <i>E</i>
                   </th>
-                  <th colSpan={2} className="border border-neutral-900 px-2 py-1 font-normal">
+                  <th colSpan={2} className={cn("border border-neutral-900 bg-white font-normal", SCALE_PX2, SCALE_PY1)}>
                     Corrected error, <i>E</i>
                     <sub>c</sub>
                   </th>
-                  <th rowSpan={2} className="border border-neutral-900 px-2 py-1 align-middle">
+                  <th rowSpan={2} className={cn("border border-neutral-900 bg-white align-middle", SCALE_PX2, SCALE_PY1)}>
                     mpe
                   </th>
                 </tr>
                 <tr>
                   {["I", "dL", "E", "Ec"].flatMap((group) =>
                     FORM_COLUMNS.map((col) => (
-                      <th key={`${group}-${col.apiDirection}`} className="border border-neutral-900 px-1 py-1 font-normal">
+                      <th
+                        key={`${group}-${col.apiDirection}`}
+                        className={cn("border border-neutral-900 bg-white font-normal", SCALE_PX1, SCALE_PY1)}
+                      >
                         {col.glyph}
                       </th>
                     )),
@@ -384,7 +469,9 @@ export function WeighingFormTable({
                     <tr key={entry.sequence_no} className={cn(isActiveRow && "bg-amber-50/70")}>
                       <td
                         className={cn(
-                          "sticky left-0 z-10 border border-neutral-900 px-2 py-1 text-right shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]",
+                          "sticky left-0 z-10 border border-neutral-900 text-right shadow-[2px_0_4px_-2px_rgba(0,0,0,0.3)]",
+                          SCALE_PX2,
+                          SCALE_PY1,
                           isActiveRow ? "bg-amber-50 font-medium" : "bg-white",
                         )}
                       >
@@ -402,7 +489,9 @@ export function WeighingFormTable({
                       {FORM_COLUMNS.map((col) => (
                         <Fragment key={`Ec-${col.apiDirection}`}>{computedCell(entry, col.apiDirection, "Ec")}</Fragment>
                       ))}
-                      <td className="border border-neutral-900 px-2 py-1 text-right">{roundForDisplay(entry.mpe)}</td>
+                      <td className={cn("border border-neutral-900 text-right", SCALE_PX2, SCALE_PY1)}>
+                        {roundForDisplay(entry.mpe)}
+                      </td>
                     </tr>
                   );
                 })}
