@@ -173,6 +173,34 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+-- Consumes certificate_number_seq atomically and formats the result as
+-- SC-{YEAR}-{6-digit sequential} (CLAUDE.md). Added this task (ADR-0008):
+-- PostgREST's REST surface has no way to call nextval() on a bare sequence
+-- directly, so a small SECURITY DEFINER function is the only path to
+-- atomic sequence consumption from the JWT-scoped client (never the
+-- service-role key). The role check inside is defense in depth alongside
+-- the API layer's own approver/admin + separation-of-duties checks
+-- (app/services/sessions.py) — a technician calling this RPC directly
+-- would get the same 42501 a disallowed UPDATE already produces.
+CREATE OR REPLACE FUNCTION public.issue_certificate_number()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  seq_val bigint;
+BEGIN
+  IF public.get_my_role() NOT IN ('approver', 'admin') THEN
+    RAISE EXCEPTION 'insufficient_privilege: only an approver or admin may issue a certificate number'
+      USING ERRCODE = '42501';
+  END IF;
+  seq_val := nextval('certificate_number_seq');
+  RETURN 'SC-' || to_char(now(), 'YYYY') || '-' || lpad(seq_val::text, 6, '0');
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.issue_certificate_number() TO authenticated;
+
 -- ============ ROW LEVEL SECURITY ============
 alter table profiles enable row level security;
 alter table instruments enable row level security;

@@ -53,6 +53,20 @@ def insert_reading(
     )
 
 
+def has_any_reading(client: Client, *, session_id: str) -> bool:
+    """Whether at least one reading of ANY test_type has been recorded for
+    this session — used by the submit lifecycle transition (a session with
+    zero readings shouldn't be submittable for review). Deliberately no
+    test_type filter, unlike list_readings: this check spans all seven
+    checklist tests, not one."""
+    rows = run_select(
+        client.table(READINGS_TABLE).select("id").eq("session_id", session_id).limit(1),
+        table=READINGS_TABLE,
+        hint=f"checking whether session {session_id!r} has any recorded reading",
+    )
+    return bool(rows)
+
+
 def list_readings(client: Client, *, session_id: str, test_type: str) -> list[dict]:
     # Ordered by created_at so the router can do last-write-wins dedup on
     # (sequence_no, direction) if a direction was ever resubmitted — there's

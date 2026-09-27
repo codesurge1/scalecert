@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
+import { useSession as useAuthSession } from "@/lib/supabase";
+import { useProfile } from "@/hooks/useProfile";
 import { PageHeader } from "@/components/AppShell";
 import { AddTestDialog } from "@/components/session/AddTestDialog";
+import { SessionLifecyclePanel } from "@/components/session/SessionLifecyclePanel";
 import { TEST_ROWS } from "@/lib/testChecklist";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,6 +88,8 @@ function TestStatusBadge({ status, verdict }) {
  */
 export function SessionPage() {
   const { id } = useParams();
+  const authSession = useAuthSession();
+  const profile = useProfile(authSession);
 
   // undefined = loading, null = load failed, object/array = loaded.
   const [session, setSession] = useState(undefined);
@@ -215,6 +220,16 @@ export function SessionPage() {
     tilting: tiltingProgress,
   };
 
+  // Submit-for-review is only meaningfully offered once at least one test
+  // has SOME recorded progress — the server is the actual source of truth
+  // (409 "no test has recorded" otherwise, app/services/sessions.py), this
+  // is just a friendlier disabled state instead of a round-trip error.
+  const hasAnyProgress = Object.values(PROGRESS_BY_KEY).some(
+    (p) => p.status === "in_progress" || p.status === "complete",
+  );
+  const canSubmit = hasAnyProgress;
+  const submitBlockedReason = "Complete at least one test before submitting for review.";
+
   if (session === undefined) {
     return (
       <div>
@@ -295,6 +310,16 @@ export function SessionPage() {
           </div>
         </CardContent>
       </Card>
+
+      {profile ? (
+        <SessionLifecyclePanel
+          session={session}
+          profile={profile}
+          canSubmit={canSubmit}
+          submitBlockedReason={submitBlockedReason}
+          onChanged={(updated) => setSession(updated)}
+        />
+      ) : null}
 
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">

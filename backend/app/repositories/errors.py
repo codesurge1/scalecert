@@ -112,3 +112,69 @@ def run_insert(query, *, table: str, hint: str) -> dict:
             likely_rls=True,
         )
     return rows[0]
+
+
+def run_update(query, *, table: str, hint: str) -> dict:
+    """Execute a Supabase `.update(...).eq(...)`-style query and return its
+    single affected row. Same two-failure-shape translation as `run_insert`:
+    an outright `APIError` (a `WITH CHECK` clause rejected the resulting
+    row), or a "successful" empty result — for an UPDATE this means the
+    row's current state didn't satisfy the policy's `USING` clause, so
+    nothing was touched at all. Since every caller here targets one
+    specific, already-resolved row by id, a zero-row result is always
+    treated as a likely RLS rejection, never a legitimate "nothing to
+    update." Never lets `rows[0]` throw a bare `IndexError`.
+    """
+    try:
+        rows = query.execute().data
+    except APIError as exc:
+        raise RepositoryError(
+            table=table,
+            operation="update",
+            hint=f"{hint} — PostgREST error {exc.code}: {exc.message}",
+            likely_rls=_is_rls_error(exc),
+            cause=exc,
+        ) from exc
+
+    if not rows:
+        raise RepositoryError(
+            table=table,
+            operation="update",
+            hint=(
+                f"{hint} — update matched/returned zero rows; likely an RLS policy's "
+                "USING clause silently excluded it (CLAUDE.md: RLS fails silently)"
+            ),
+            likely_rls=True,
+        )
+    return rows[0]
+
+
+def run_rpc(query, *, table: str, hint: str):
+    """Execute a Supabase `.rpc(name, params)`-style query and return its
+    scalar `.data`. A Postgres function that itself raises (e.g. a role
+    check via `RAISE EXCEPTION ... USING ERRCODE = '42501'`) surfaces here
+    as an `APIError` exactly like a rejected INSERT/UPDATE does, so the
+    same RLS-code detection applies. Used for `issue_certificate_number()`
+    — the one place this app calls a stored procedure rather than a plain
+    table operation, since consuming a Postgres sequence atomically has no
+    other path through PostgREST's table-only REST surface.
+    """
+    try:
+        response = query.execute()
+    except APIError as exc:
+        raise RepositoryError(
+            table=table,
+            operation="rpc",
+            hint=f"{hint} — PostgREST error {exc.code}: {exc.message}",
+            likely_rls=_is_rls_error(exc),
+            cause=exc,
+        ) from exc
+
+    if not response.data:
+        raise RepositoryError(
+            table=table,
+            operation="rpc",
+            hint=f"{hint} — rpc call returned no value",
+            likely_rls=True,
+        )
+    return response.data

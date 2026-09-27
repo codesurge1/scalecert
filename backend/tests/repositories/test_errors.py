@@ -1,13 +1,14 @@
 """Pure unit tests for app.repositories.errors — no DB, no HTTP. Proves
-`run_select`/`run_insert` never let a bare `IndexError` or unhandled
-`postgrest.exceptions.APIError` escape, for both failure shapes CLAUDE.md
-calls out: an explicit PostgREST error, and a "successful" empty result.
+`run_select`/`run_insert`/`run_update`/`run_rpc` never let a bare
+`IndexError` or unhandled `postgrest.exceptions.APIError` escape, for both
+failure shapes CLAUDE.md calls out: an explicit PostgREST error, and a
+"successful" empty result.
 """
 
 import pytest
 from postgrest.exceptions import APIError
 
-from app.repositories.errors import RepositoryError, run_insert, run_select
+from app.repositories.errors import RepositoryError, run_insert, run_rpc, run_select, run_update
 
 
 class _FakeResponse:
@@ -109,3 +110,69 @@ def test_repository_error_str_names_table_and_hint():
     assert "instruments" in str(exc)
     assert "insert" in str(exc)
     assert "something specific" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# run_update — same two-failure-shape translation as run_insert, but a zero-
+# row UPDATE result means the row's CURRENT state didn't satisfy the
+# policy's USING clause (session lifecycle transitions, app/routers/sessions.py).
+# ---------------------------------------------------------------------------
+def test_run_update_returns_first_row_on_success():
+    row = run_update(_FakeQuery(data=[{"id": "a", "status": "submitted"}]), table="test_sessions", hint="submitting")
+    assert row == {"id": "a", "status": "submitted"}
+
+
+def test_run_update_raises_on_empty_rows_never_a_bare_index_error():
+    with pytest.raises(RepositoryError) as excinfo:
+        run_update(_FakeQuery(data=[]), table="test_sessions", hint="approving session 'sess-1'")
+    exc = excinfo.value
+    assert exc.table == "test_sessions"
+    assert exc.operation == "update"
+    assert exc.likely_rls is True  # zero-rows-on-update is always treated as a likely RLS rejection
+    assert "zero rows" in exc.hint
+
+
+def test_run_update_wraps_api_error_from_rejected_write():
+    query = _FakeQuery(raises=_api_error("42501", "new row violates row-level security policy"))
+    with pytest.raises(RepositoryError) as excinfo:
+        run_update(query, table="test_sessions", hint="approving session 'sess-1'")
+    exc = excinfo.value
+    assert exc.operation == "update"
+    assert exc.likely_rls is True
+    assert "42501" in exc.hint
+
+
+def test_run_update_non_rls_api_error_is_not_flagged_likely_rls():
+    query = _FakeQuery(raises=_api_error("23502", "null value in column violates not-null constraint"))
+    with pytest.raises(RepositoryError) as excinfo:
+        run_update(query, table="test_sessions", hint="issuing session 'sess-1'")
+    assert excinfo.value.likely_rls is False
+
+
+# ---------------------------------------------------------------------------
+# run_rpc — used for issue_certificate_number() (ADR-0008). A Postgres
+# function that itself raises surfaces as an APIError exactly like a
+# rejected table operation.
+# ---------------------------------------------------------------------------
+def test_run_rpc_returns_scalar_data_on_success():
+    value = run_rpc(_FakeQuery(data="SC-2026-000001"), table="certificate_number_seq", hint="issuing a certificate number")
+    assert value == "SC-2026-000001"
+
+
+def test_run_rpc_raises_on_empty_data():
+    with pytest.raises(RepositoryError) as excinfo:
+        run_rpc(_FakeQuery(data=None), table="certificate_number_seq", hint="issuing a certificate number")
+    assert excinfo.value.operation == "rpc"
+    assert excinfo.value.likely_rls is True
+
+
+def test_run_rpc_wraps_api_error_from_a_raised_postgres_exception():
+    # Simulates issue_certificate_number()'s own role-check RAISE EXCEPTION
+    # ... USING ERRCODE = '42501' when a non-approver/admin calls it directly.
+    query = _FakeQuery(raises=_api_error("42501", "insufficient_privilege: only an approver or admin may issue a certificate number"))
+    with pytest.raises(RepositoryError) as excinfo:
+        run_rpc(query, table="certificate_number_seq", hint="issuing a certificate number")
+    exc = excinfo.value
+    assert exc.operation == "rpc"
+    assert exc.likely_rls is True
+    assert "42501" in exc.hint

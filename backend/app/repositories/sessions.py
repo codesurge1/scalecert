@@ -1,10 +1,14 @@
+from typing import Optional
+
 from supabase import Client
 
 from app.contracts.session import SessionIn, session_insert_payload
-from app.repositories.errors import run_insert, run_select
+from app.repositories.errors import run_insert, run_rpc, run_select, run_update
 
 SESSIONS_TABLE = "test_sessions"
 SELECTIONS_TABLE = "session_test_selection"
+AUDIT_TABLE = "audit_log"
+CERTIFICATE_SEQUENCE = "certificate_number_seq"
 
 
 def insert_session(client: Client, created_by: str, payload: SessionIn) -> dict:
@@ -49,4 +53,63 @@ def get_session_test_selections(client: Client, session_id: str) -> list[dict]:
         client.table(SELECTIONS_TABLE).select("*").eq("session_id", session_id),
         table=SELECTIONS_TABLE,
         hint=f"listing test selections for session {session_id!r}",
+    )
+
+
+def update_session(client: Client, session_id: str, patch: dict) -> dict:
+    """The one write path for every lifecycle transition (submit/reopen/
+    return/approve/issue) — a plain UPDATE of `patch`'s keys, gated by
+    whichever of `sessions_update_owner`/`sessions_update_approver` matches
+    the caller's role and the row's current status. Finer transition
+    validity (e.g. rejecting an out-of-order move with a clean 409) is the
+    caller's job (app/services/sessions.py) — this function only performs
+    the write and translates both RLS failure shapes via `run_update`.
+    """
+    return run_update(
+        client.table(SESSIONS_TABLE).update(patch).eq("id", session_id),
+        table=SESSIONS_TABLE,
+        hint=(
+            f"updating session {session_id!r} (fields: {sorted(patch)}) — check policy "
+            "'sessions_update_owner' or 'sessions_update_approver'"
+        ),
+    )
+
+
+def get_latest_return_reason(client: Client, session_id: str) -> Optional[str]:
+    """The reason text from the most recent `action='returned'` audit_log
+    row for this session — the ONLY place a return reason is stored (no
+    dedicated `test_sessions` column exists, and this task deliberately
+    doesn't add one — see docs/architecture.md, Session lifecycle). Visible
+    under the same RLS as the session itself (`audit_select`: creator,
+    approver, or admin), so a technician viewing their own returned session
+    can read it back.
+    """
+    rows = run_select(
+        client.table(AUDIT_TABLE)
+        .select("data")
+        .eq("session_id", session_id)
+        .eq("action", "returned")
+        .order("created_at", desc=True)
+        .limit(1),
+        table=AUDIT_TABLE,
+        hint=f"fetching the latest return reason for session {session_id!r}",
+    )
+    if not rows:
+        return None
+    return (rows[0].get("data") or {}).get("reason")
+
+
+def issue_certificate_number(client: Client) -> str:
+    """Calls the `issue_certificate_number()` Postgres function (db/schema.sql)
+    to atomically consume `certificate_number_seq` and format the result as
+    `SC-{YEAR}-{6-digit}`. A stored procedure is the only way to consume a
+    sequence through PostgREST's table-only REST surface — see ADR-0008 for
+    why this one small function was added rather than computing the number
+    in application code (which could not be atomic across concurrent
+    approvers without it).
+    """
+    return run_rpc(
+        client.rpc("issue_certificate_number", {}),
+        table=CERTIFICATE_SEQUENCE,
+        hint="generating the next certificate number via issue_certificate_number()",
     )

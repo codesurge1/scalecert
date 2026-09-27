@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,7 +28,7 @@ from app.contracts.sensitivity import (
     SensitivityResultOut,
     reading_and_result_to_record_out as sensitivity_reading_and_result_to_record_out,
 )
-from app.contracts.session import SessionIn, SessionOut, session_out_from_rows
+from app.contracts.session import SessionIn, SessionOut, SessionReturnIn, session_out_from_rows
 from app.contracts.tilting import TiltingReadingSubmitIn, TiltingStateOut
 from app.contracts.weighing import (
     WeighingReadingRecordOut,
@@ -45,6 +46,7 @@ from app.contracts.zero_tare import (
 )
 from app.deps import AuthContext, get_auth_context
 from app.repositories import instruments as instruments_repo
+from app.repositories import profiles as profiles_repo
 from app.repositories import readings as readings_repo
 from app.repositories import sessions as sessions_repo
 from app.repositories.errors import RepositoryError
@@ -55,7 +57,22 @@ from app.services import sensitivity as sensitivity_service
 from app.services import tilting as tilting_service
 from app.services import weighing as weighing_service
 from app.services import zero_tare as zero_tare_service
-from app.services.sessions import SessionNotDraft, ensure_session_is_draft
+from app.services.sessions import (
+    CannotActOnOwnSession,
+    CannotIssue,
+    InvalidTransition,
+    NotAnApprover,
+    NotSessionCreator,
+    SessionHasNoReadings,
+    SessionNotDraft,
+    ensure_can_issue,
+    ensure_has_readings,
+    ensure_is_approver_or_admin,
+    ensure_is_creator,
+    ensure_not_own_session,
+    ensure_session_is_draft,
+    ensure_status,
+)
 from engine.types import VerificationType
 
 logger = logging.getLogger(__name__)
@@ -110,14 +127,252 @@ def create_session(payload: SessionIn, auth: AuthContext = Depends(get_auth_cont
         ) from exc
 
     selection_rows = sessions_repo.get_session_test_selections(auth.client, session_row["id"])
-    return session_out_from_rows(session_row, selection_rows)
+    return _build_session_out(auth.client, session_row, selection_rows)
 
 
 @router.get("/{session_id}", response_model=SessionOut)
 def get_session(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
     session_row = _get_session_or_404(auth.client, session_id)
     selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
-    return session_out_from_rows(session_row, selection_rows)
+    return _build_session_out(auth.client, session_row, selection_rows)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle transitions: draft -> submitted -> approved -> issued, plus
+# returned (approver sends back) and reopen (technician's own way back to
+# draft from returned, so readings_write's status='draft' requirement is
+# satisfiable again before resubmitting). Separation of duties (CLAUDE.md)
+# is enforced twice: RLS's `sessions_update_owner`/`sessions_update_approver`
+# policies (db/schema.sql) are the coarse, non-negotiable guard; the explicit
+# checks below are the API layer's OWN defense-in-depth, so a rejection is a
+# clean, specific error instead of a generic RLS 403.
+# ---------------------------------------------------------------------------
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _build_session_out(client, session_row: dict, selection_rows: list[dict]) -> SessionOut:
+    """The one place `SessionOut` is assembled from a session row — looks up
+    the return reason (audit_log, not a column — see
+    app.repositories.sessions.get_latest_return_reason) only when the
+    session is actually `returned`, so every other status skips that extra
+    read entirely."""
+    return_reason = None
+    if session_row["status"] == SessionStatus.RETURNED.value:
+        return_reason = sessions_repo.get_latest_return_reason(client, session_row["id"])
+    return session_out_from_rows(session_row, selection_rows, return_reason=return_reason)
+
+
+def _update_session_or_error(client, session_id: str, patch: dict) -> dict:
+    try:
+        return sessions_repo.update_session(client, session_id, patch)
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not update the session ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+
+def _log_transition(client, *, session_id: str, actor_id: str, action: str, data: dict) -> None:
+    """Non-fatal audit write, same convention as every reading submission
+    (docs/architecture.md: "Audit is non-fatal") — with ONE deliberate
+    exception: `submit_session`'s `return` action calls its own audit
+    insert directly instead, since the return reason has nowhere else to
+    live (see `return_session` below)."""
+    try:
+        readings_repo.insert_audit_log(client, session_id=session_id, actor_id=actor_id, action=action, data=data)
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s (%s): %s", session_id, action, exc)
+
+
+@router.post("/{session_id}/submit", response_model=SessionOut)
+def submit_session(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
+    """Technician moves their own session draft -> submitted. Requires at
+    least one recorded reading (across any test) — an empty session has
+    nothing for an approver to review."""
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_is_creator(session_row["created_by"], auth.user_id, "submit this session for review")
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.DRAFT, "submit this session for review")
+        ensure_has_readings(readings_repo.has_any_reading(auth.client, session_id=session_id))
+    except NotSessionCreator as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SessionHasNoReadings as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    updated_row = _update_session_or_error(
+        auth.client, session_id, {"status": SessionStatus.SUBMITTED.value, "submitted_at": _now_iso()}
+    )
+    _log_transition(auth.client, session_id=session_id, actor_id=auth.user_id, action="submitted", data={})
+
+    selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
+    return _build_session_out(auth.client, updated_row, selection_rows)
+
+
+@router.post("/{session_id}/reopen", response_model=SessionOut)
+def reopen_session(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
+    """Technician moves their own RETURNED session back to draft, so it can
+    be edited (readings_write requires status='draft') and resubmitted.
+    Not one of the four named transitions in the task brief, but required
+    to make "returned -> technician edits -> resubmits" (docs/architecture.md,
+    Session lifecycle) actually possible: nothing else moves a session out
+    of 'returned'."""
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_is_creator(session_row["created_by"], auth.user_id, "reopen this session for editing")
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.RETURNED, "reopen this session for editing")
+    except NotSessionCreator as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    updated_row = _update_session_or_error(auth.client, session_id, {"status": SessionStatus.DRAFT.value})
+    _log_transition(auth.client, session_id=session_id, actor_id=auth.user_id, action="reopened", data={})
+
+    selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
+    return _build_session_out(auth.client, updated_row, selection_rows)
+
+
+@router.post("/{session_id}/return", response_model=SessionOut)
+def return_session(
+    session_id: str, payload: SessionReturnIn, auth: AuthContext = Depends(get_auth_context)
+) -> SessionOut:
+    """Approver/admin moves a SUBMITTED session back to returned, with a
+    required reason. Not the session's own creator (separation of duties).
+
+    The audit_log write here is deliberately NOT non-fatal, unlike every
+    other transition/reading submission in this app: `data.reason` is the
+    ONLY place the reason is stored (no `test_sessions` column exists for
+    it — see app.contracts.session.SessionOut.return_reason), so losing that
+    write would silently lose the reason while still reporting success.
+    Written BEFORE the status update for the same reason: if the audit
+    write fails, nothing has changed yet (safe to retry); if the status
+    update then fails, the audit trail still has the reason (a resubmitted
+    return call is a second, harmless append-only row).
+    """
+    session_row = _get_session_or_404(auth.client, session_id)
+    role = profiles_repo.get_role(auth.client, auth.user_id)
+
+    try:
+        ensure_is_approver_or_admin(role, "return this session")
+        ensure_not_own_session(session_row["created_by"], auth.user_id, "return")
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.SUBMITTED, "return this session")
+    except NotAnApprover as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CannotActOnOwnSession as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="returned",
+            data={"reason": payload.reason},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="could not record the return reason; the session was not returned — please retry",
+        ) from exc
+
+    updated_row = _update_session_or_error(auth.client, session_id, {"status": SessionStatus.RETURNED.value})
+
+    selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
+    return _build_session_out(auth.client, updated_row, selection_rows)
+
+
+@router.post("/{session_id}/approve", response_model=SessionOut)
+def approve_session(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
+    """Approver/admin moves a SUBMITTED session to approved. Not the
+    session's own creator (separation of duties) — the core guarantee this
+    whole task exists to demonstrate."""
+    session_row = _get_session_or_404(auth.client, session_id)
+    role = profiles_repo.get_role(auth.client, auth.user_id)
+
+    try:
+        ensure_is_approver_or_admin(role, "approve this session")
+        ensure_not_own_session(session_row["created_by"], auth.user_id, "approve")
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.SUBMITTED, "approve this session")
+    except NotAnApprover as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CannotActOnOwnSession as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    updated_row = _update_session_or_error(
+        auth.client,
+        session_id,
+        {"status": SessionStatus.APPROVED.value, "approved_by": auth.user_id, "approved_at": _now_iso()},
+    )
+    _log_transition(auth.client, session_id=session_id, actor_id=auth.user_id, action="approved", data={})
+
+    selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
+    return _build_session_out(auth.client, updated_row, selection_rows)
+
+
+@router.post("/{session_id}/issue", response_model=SessionOut)
+def issue_session(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> SessionOut:
+    """Approver/admin moves an APPROVED session to issued, assigning the
+    certificate number from `certificate_number_seq` (never before this
+    point — CLAUDE.md). Who may issue: an admin, or specifically the SAME
+    approver who approved it (`ensure_can_issue`) — a deliberate, documented
+    choice (docs/architecture.md, Session lifecycle), not something RLS
+    itself distinguishes.
+    """
+    session_row = _get_session_or_404(auth.client, session_id)
+    role = profiles_repo.get_role(auth.client, auth.user_id)
+
+    try:
+        ensure_is_approver_or_admin(role, "issue this session's certificate")
+        ensure_not_own_session(session_row["created_by"], auth.user_id, "issue this session's certificate for")
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.APPROVED, "issue this session's certificate")
+        ensure_can_issue(role, auth.user_id, session_row.get("approved_by"))
+    except NotAnApprover as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CannotActOnOwnSession as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CannotIssue as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    try:
+        certificate_number = sessions_repo.issue_certificate_number(auth.client)
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not generate a certificate number ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    updated_row = _update_session_or_error(
+        auth.client,
+        session_id,
+        {
+            "status": SessionStatus.ISSUED.value,
+            "issued_at": _now_iso(),
+            "certificate_number": certificate_number,
+        },
+    )
+    _log_transition(
+        auth.client,
+        session_id=session_id,
+        actor_id=auth.user_id,
+        action="issued",
+        data={"certificate_number": certificate_number},
+    )
+
+    selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
+    return _build_session_out(auth.client, updated_row, selection_rows)
 
 
 @router.get("/{session_id}/weighing/sequence", response_model=list[WeighingSequenceEntryOut])
