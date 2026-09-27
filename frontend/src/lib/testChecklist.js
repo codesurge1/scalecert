@@ -1,17 +1,16 @@
 // The OIML clause 8.3.3 seven-item checklist (CLAUDE.md), shared between the
 // session overview (which lists added/started tests) and the "Add test"
-// picker (which lets a technician pick one to open). Weighing, Zero/tare
-// device accuracy, Repeatability, and Eccentricity now have working forms
-// (`route` below); `zero_tare` has no own `test_type` in the schema — it's
-// stored as a Weighing variant (db/schema.sql's test_type enum comment;
-// distinguished by `direction` being null — see
+// picker (which lets a technician pick one to open). All seven now have
+// working forms (`route` below) — `zero_tare` has no own `test_type` in the
+// schema — it's stored as a Weighing variant (db/schema.sql's test_type
+// enum comment; distinguished by `direction` being null — see
 // backend/app/contracts/zero_tare.py) — but IS its own selectable row and
-// form here, same as any other test. The remaining three (Discrimination,
-// Tilting, Sensitivity) don't have forms yet; applicability for those is
-// computed from the instrument here rather than from
-// `session_test_selections`, since no selection rows are created for them
-// yet (only `weighing` is, at session creation) — the per-session test
-// selector is a later task (docs/plan.md Phase 3), not built here.
+// form here, same as any other test. Applicability for the three
+// conditional tests (Discrimination/Tilting/Sensitivity) is computed from
+// the instrument here rather than from `session_test_selections`, since no
+// selection rows are created for any test but Weighing yet — the
+// per-session test selector is a later task (docs/plan.md Phase 3), not
+// built here.
 export const TEST_ROWS = [
   { key: "weighing", label: "Weighing", clause: "A.4.4 / A.5.3.1", route: (sessionId) => `/sessions/${sessionId}/weighing` },
   {
@@ -36,13 +35,19 @@ export const TEST_ROWS = [
     key: "discrimination",
     label: "Discrimination",
     clause: "A.4.8",
+    // N/A only for digital instruments (clause 8.3.3) — analog and
+    // non-self-indicating instruments both get a working (different)
+    // sub-procedure, derived server-side from indication_type, never
+    // chosen here.
     naReason: (instrument) => (instrument.indication_type === "digital" ? "N/A — digital instrument" : null),
+    route: (sessionId) => `/sessions/${sessionId}/discrimination`,
   },
   {
     key: "tilting",
     label: "Tilting",
     clause: "A.5.1.3",
     naReason: (instrument) => (!instrument.is_mobile ? "N/A — mobile instruments only" : null),
+    route: (sessionId) => `/sessions/${sessionId}/tilting`,
   },
   {
     key: "sensitivity",
@@ -50,6 +55,7 @@ export const TEST_ROWS = [
     clause: "A.4.9",
     naReason: (instrument) =>
       instrument.indication_type !== "non_self_indicating" ? "N/A — non-self-indicating instruments only" : null,
+    route: (sessionId) => `/sessions/${sessionId}/sensitivity`,
   },
 ];
 

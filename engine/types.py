@@ -140,3 +140,90 @@ class EccentricityPositionResult:
 
     position_no: int
     weighing_result: WeighingResult
+
+
+@dataclass(frozen=True)
+class DiscriminationAnalogResult:
+    """Discrimination, analog-indication sub-procedure (R76-1 A.4.8.1,
+    engine/discrimination.py). Pass: I2 - I1 >= 0.7 * mpe."""
+
+    L: Decimal
+    mpe: Decimal
+    mpe_lookup: MpeResult
+    I1: Decimal
+    I2: Decimal
+    difference: Decimal
+    threshold: Decimal
+    passed: bool
+
+
+@dataclass(frozen=True)
+class DiscriminationNonSelfIndicatingResult:
+    """Discrimination, non-self-indicating sub-procedure (R76-1 A.4.8.1,
+    engine/discrimination.py). Qualitative — pass iff a displacement was
+    actually observed."""
+
+    L: Decimal
+    mpe: Decimal
+    mpe_lookup: MpeResult
+    extra_load: Decimal
+    visible_displacement: bool
+    passed: bool
+
+
+@dataclass(frozen=True)
+class DiscriminationDigitalResult:
+    """Discrimination, digital-indication sub-procedure (R76-1 A.4.8.2,
+    engine/discrimination.py) — exists in the standard, but NOT required for
+    verification of digital instruments per clause 8.3.3 (the frontend gates
+    this variant N/A; this dataclass/function exist for spec completeness).
+    No mpe involved at all — pass: I2 - I1 >= d."""
+
+    L: Decimal
+    d: Decimal
+    I1: Decimal
+    I2: Decimal
+    difference: Decimal
+    passed: bool
+
+
+@dataclass(frozen=True)
+class SensitivityResult:
+    """Sensitivity, non-self-indicating instruments only (R76-1 A.4.9,
+    engine/sensitivity.py). Pass threshold is tiered by accuracy class AND
+    Max (see sensitivity_threshold_mm), not a single fixed number."""
+
+    L: Decimal
+    mpe: Decimal
+    mpe_lookup: MpeResult
+    extra_load: Decimal
+    permanent_displacement_mm: Decimal
+    threshold_mm: Decimal
+    passed: bool
+
+
+@dataclass(frozen=True)
+class TiltingUnloadedCheckResult:
+    """Tilting's criterion (a) (engine/tilting.py): the unloaded E0 measured
+    at each of the (up to) 5 positions must not deviate from the reference
+    position's (1) own E0 by more than 2e."""
+
+    reference_e0: Decimal
+    max_abs_deviation: Decimal
+    limit: Decimal
+    within_limit: bool
+
+
+@dataclass(frozen=True)
+class TiltingLoadedCheckResult:
+    """Tilting's criterion (b) (engine/tilting.py), checked independently at
+    each of the two loaded rows (a mid load and Max): the corrected error at
+    each tilted position must not deviate from the reference position's (1)
+    own corrected error by more than that row's own mpe."""
+
+    L: Decimal
+    mpe: Decimal
+    mpe_lookup: MpeResult
+    reference_ec: Decimal
+    max_abs_deviation: Decimal
+    within_mpe: bool

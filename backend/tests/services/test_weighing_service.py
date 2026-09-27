@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.contracts.common import IndicationType
 from app.contracts.instrument import InstrumentParams
 from app.contracts.weighing import WeighingReadingSubmitIn
 from app.services.weighing import (
@@ -21,6 +22,9 @@ _INSTRUMENT = InstrumentParams(
     e_value=D("1"),
     max_capacity=D("5000"),
     min_capacity=D("10"),
+    indication_type=IndicationType.DIGITAL,
+    is_mobile=False,
+    d_value=None,
 )
 
 

@@ -143,15 +143,23 @@ class InstrumentOut(BaseModel):
 
 @dataclass(frozen=True)
 class InstrumentParams:
-    """The subset of an `instruments` row the Weighing engine and the
-    load-sequence generator need — a narrower, engine-facing shape than the
-    full `InstrumentOut`, so services/weighing.py doesn't have to depend on
-    every descriptive field an instrument row happens to carry."""
+    """The subset of an `instruments` row the test engines/services need — a
+    narrower, engine-facing shape than the full `InstrumentOut`, so a
+    service module doesn't have to depend on every descriptive field an
+    instrument row happens to carry. `indication_type`/`is_mobile`/`d_value`
+    were added for Discrimination (variant derivation + the digital
+    variant's `d`), Sensitivity (non-self-indicating gating), and Tilting
+    (mobile-only gating) — every earlier consumer (Weighing, Zero-tare,
+    Repeatability, Eccentricity) only ever reads the original four fields,
+    so this is purely additive."""
 
     accuracy_class: AccuracyClass
     e_value: Decimal
     max_capacity: Decimal
     min_capacity: Optional[Decimal]
+    indication_type: IndicationType
+    is_mobile: bool
+    d_value: Optional[Decimal]
 
 
 _NUMERIC_FIELDS = (
@@ -208,4 +216,7 @@ def instrument_params_from_row(row: dict) -> InstrumentParams:
         min_capacity=(
             decimal_from_db_value(row["min_capacity"]) if row.get("min_capacity") is not None else None
         ),
+        indication_type=IndicationType(row["indication_type"]),
+        is_mobile=bool(row["is_mobile"]),
+        d_value=(decimal_from_db_value(row["d_value"]) if row.get("d_value") is not None else None),
     )
