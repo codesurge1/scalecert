@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { apiFetch, ApiError } from "@/lib/api";
+import { API_BASE, apiFetch, ApiError } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -159,6 +160,45 @@ export function SessionLifecyclePanel({ session, profile, canSubmit, submitBlock
   const canIssue =
     profile?.role === "admin" || (profile?.role === "approver" && session.approved_by === profile?.id);
 
+  // apiFetch parses every response as JSON, so it can't be reused for a
+  // binary PDF download — this fetches the raw bytes directly, attaching
+  // the session token the same way apiFetch does internally, then triggers
+  // a normal browser download from the resulting blob.
+  async function handleDownloadCertificate() {
+    setBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const response = await fetch(`${API_BASE}/sessions/${session.id}/report`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let detail = `Request failed with status ${response.status}`;
+        try {
+          detail = JSON.parse(text)?.detail ?? detail;
+        } catch {
+          // response wasn't JSON — keep the generic detail above
+        }
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${session.certificate_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err.message || "Could not download the certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Card>
       <CardContent className="grid gap-4 py-4">
@@ -235,6 +275,22 @@ export function SessionLifecyclePanel({ session, profile, canSubmit, submitBlock
 
           {/* A technician with nothing to approve/return/issue sees no
               buttons at all — there is nothing else to say (item 10). */}
+
+          {/* Issued — download the generated PDF and/or open the public,
+              login-free verification page anyone (not just this app's
+              users) can reach via the certificate's QR code. */}
+          {session.status === "issued" && session.certificate_number ? (
+            <>
+              <Button size="sm" variant="outline" onClick={handleDownloadCertificate} disabled={busy}>
+                Download certificate
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <a href={`/verify/${session.certificate_number}`} target="_blank" rel="noreferrer">
+                  View public verification page
+                </a>
+              </Button>
+            </>
+          ) : null}
         </div>
       </CardContent>
     </Card>

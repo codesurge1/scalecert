@@ -147,6 +147,21 @@ create table audit_log (
   created_at timestamptz not null default now()
 );
 
+-- Public, login-free "report a discrepancy" submissions against a
+-- certificate number (app/routers/verify.py — no auth). No FK to
+-- test_sessions.certificate_number and no existence/issued check at the
+-- API layer, deliberately: either would let a caller distinguish "not a
+-- real certificate" from "real but not issued" from "real and issued" —
+-- exactly the distinction GET /verify/{certificate_number} is careful
+-- never to leak (ADR-0009). Plain text column instead.
+create table discrepancy_reports (
+  id uuid primary key default gen_random_uuid(),
+  certificate_number text not null,
+  description text not null,
+  contact text,
+  created_at timestamptz not null default now()
+);
+
 create sequence certificate_number_seq;
 
 -- ============ FUNCTIONS (ported verbatim from the validated original build) ============
@@ -201,6 +216,93 @@ $function$;
 
 GRANT EXECUTE ON FUNCTION public.issue_certificate_number() TO authenticated;
 
+-- Records where a generated certificate PDF was stored
+-- (test_sessions.report_storage_path), on a session whose status is
+-- 'issued'. Added this task (ADR-0009): once a session is 'issued' it
+-- matches NO UPDATE policy on test_sessions at all (see
+-- sessions_update_owner/sessions_update_approver below) — deliberately,
+-- so an issued certificate's actual content can never be altered. This
+-- function does NOT reopen that: it is scoped to exactly one column, on a
+-- row it itself confirms is 'issued', gated by its own authorization
+-- check (the session's creator, or an approver/admin) — the same
+-- defense-in-depth check the API layer (app/routers/sessions.py) already
+-- makes before ever calling this.
+CREATE OR REPLACE FUNCTION public.set_report_storage_path(p_session_id uuid, p_path text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  v_created_by uuid;
+  v_status session_status;
+BEGIN
+  SELECT created_by, status INTO v_created_by, v_status
+  FROM test_sessions WHERE id = p_session_id;
+
+  IF v_created_by IS NULL THEN
+    RAISE EXCEPTION 'session not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_status <> 'issued' THEN
+    RAISE EXCEPTION 'insufficient_privilege: report_storage_path may only be set on an issued session'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT (auth.uid() = v_created_by OR public.get_my_role() IN ('approver', 'admin')) THEN
+    RAISE EXCEPTION 'insufficient_privilege: only the session''s creator, an approver, or an admin may set this'
+      USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE test_sessions SET report_storage_path = p_path WHERE id = p_session_id;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.set_report_storage_path(uuid, text) TO authenticated;
+
+-- The ONE deliberate anonymous-read exception in this schema (ADR-0009).
+-- No RLS policy anywhere permits an anonymous SELECT — correctly, nothing
+-- else here should be publicly queryable. This SECURITY DEFINER function
+-- is instead a fixed, hand-picked safe field list, gated by its own WHERE
+-- clause: it returns a row ONLY for a certificate number whose session
+-- status is 'issued' — anything else (not found, or found but
+-- draft/submitted/approved/returned/superseded) comes back as zero rows,
+-- indistinguishably, so a caller can never learn whether a non-issued
+-- session with that certificate_number even exists. Never returns:
+-- technician/approver identity, raw readings, internal ids, remarks, or
+-- any column not explicitly selected below. Adding a field here means
+-- adding it to app.contracts.verify.PublicCertificateOut too (that model
+-- validates shape, this function decides what's safe).
+CREATE OR REPLACE FUNCTION public.get_public_certificate_info(p_certificate_number text)
+ RETURNS TABLE (
+   certificate_number text,
+   status session_status,
+   instrument_model text,
+   instrument_manufacturer text,
+   instrument_type_designation text,
+   accuracy_class accuracy_class,
+   verification_type verification_type,
+   issued_at timestamptz
+ )
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+AS $function$
+  SELECT
+    s.certificate_number,
+    s.status,
+    i.model,
+    i.manufacturer,
+    i.type_designation,
+    i.accuracy_class,
+    s.verification_type,
+    s.issued_at
+  FROM test_sessions s
+  JOIN instruments i ON i.id = s.instrument_id
+  WHERE s.certificate_number = p_certificate_number
+    AND s.status = 'issued';
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.get_public_certificate_info(text) TO anon, authenticated;
+
 -- ============ ROW LEVEL SECURITY ============
 alter table profiles enable row level security;
 alter table instruments enable row level security;
@@ -209,6 +311,7 @@ alter table session_test_selection enable row level security;
 alter table test_readings enable row level security;
 alter table test_results enable row level security;
 alter table audit_log enable row level security;
+alter table discrepancy_reports enable row level security;
 
 -- profiles: read own (privileged roles read all); only admin changes roles.
 create policy profiles_select_own on profiles for select
@@ -286,3 +389,13 @@ create policy audit_select on audit_log for select
   using (public.get_my_role() = 'admin'
          or (session_id is not null and exists (select 1 from test_sessions s where s.id = session_id
              and (s.created_by = auth.uid() or public.get_my_role() = 'approver'))));
+
+-- discrepancy_reports: the ONE table anyone (no auth at all) may INSERT into
+-- (app/routers/verify.py) — a citizen/inspector reporting a problem with a
+-- certificate needs no account. No SELECT for anon/authenticated at all —
+-- only admin may ever read these back; nothing here is publicly queryable,
+-- matching every other table in this schema, just with INSERT opened up.
+create policy discrepancy_insert_anon on discrepancy_reports for insert
+  with check (true);
+create policy discrepancy_select_admin on discrepancy_reports for select
+  using (public.get_my_role() = 'admin');

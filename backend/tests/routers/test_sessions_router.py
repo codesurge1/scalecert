@@ -19,6 +19,7 @@ import app.repositories.instruments as instruments_repo
 import app.repositories.profiles as profiles_repo
 import app.repositories.readings as readings_repo
 import app.repositories.sessions as sessions_repo
+import app.repositories.storage as storage_repo
 from app.deps import AuthContext, get_auth_context
 from app.main import app
 from app.repositories.errors import RepositoryError
@@ -826,3 +827,150 @@ def test_issue_maps_likely_rls_repository_error_from_certificate_rpc_to_403(monk
     monkeypatch.setattr(sessions_repo, "issue_certificate_number", failing_rpc)
     resp = client.post("/api/sessions/sess-1/issue")
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Certificate PDF generation — POST /sessions/{id}/report (Part A).
+# ---------------------------------------------------------------------------
+
+_ISSUED_SESSION_ROW = dict(
+    _DRAFT_SESSION_ROW,
+    status="issued",
+    certificate_number="SC-2026-000001",
+    approved_by=_OTHER_USER_ID,
+    approved_at="2026-01-04T10:00:00Z",
+    issued_at="2026-01-05T10:00:00Z",
+)
+
+
+def _fake_list_readings_weighing_only(client, **kwargs):
+    if kwargs.get("test_type") == "weighing":
+        return [
+            _reading_row("r-up", 0, "up", "2026-01-01T00:00:00Z"),
+            _reading_row("r-down", 0, "down", "2026-01-01T00:00:01Z"),
+        ]
+    return []
+
+
+def _fake_list_results_weighing_only(client, **kwargs):
+    if kwargs.get("test_type") == "weighing":
+        return [_result_row("res-up", "r-up"), _result_row("res-down", "r-down")]
+    return []
+
+
+def _mock_report_plumbing(monkeypatch, *, list_readings=None, list_results=None):
+    monkeypatch.setattr(readings_repo, "list_readings", list_readings or _fake_list_readings_weighing_only)
+    monkeypatch.setattr(readings_repo, "list_results", list_results or _fake_list_results_weighing_only)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(storage_repo, "upload_report_pdf", lambda client, **kwargs: kwargs["path"])
+    monkeypatch.setattr(sessions_repo, "set_report_storage_path", lambda client, session_id, path: None)
+
+
+def test_generate_report_happy_path_creator(monkeypatch):
+    # The session's own creator (_FAKE_AUTH.user_id) downloading their own
+    # issued certificate — no role check needed for this, unlike the
+    # lifecycle-transition endpoints.
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    _mock_report_plumbing(monkeypatch)
+
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content[:4] == b"%PDF"
+    assert "SC-2026-000001" in resp.headers["content-disposition"]
+
+
+def test_generate_report_happy_path_approver_not_creator(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW, created_by=_OTHER_USER_ID)
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "approver")
+    _mock_report_plumbing(monkeypatch)
+
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"%PDF"
+
+
+def test_generate_report_uploads_to_storage_at_the_certificate_number_path(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    uploaded = {}
+
+    def fake_upload(client, **kwargs):
+        uploaded.update(kwargs)
+        return kwargs["path"]
+
+    monkeypatch.setattr(readings_repo, "list_readings", _fake_list_readings_weighing_only)
+    monkeypatch.setattr(readings_repo, "list_results", _fake_list_results_weighing_only)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(storage_repo, "upload_report_pdf", fake_upload)
+
+    recorded_paths = []
+    monkeypatch.setattr(
+        sessions_repo, "set_report_storage_path", lambda client, session_id, path: recorded_paths.append(path)
+    )
+
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 200
+    assert uploaded["path"] == "certificates/SC-2026-000001.pdf"
+    assert uploaded["pdf_bytes"][:4] == b"%PDF"
+    assert recorded_paths == ["certificates/SC-2026-000001.pdf"]
+
+
+def test_generate_report_rejects_unrelated_technician(monkeypatch):
+    monkeypatch.setattr(
+        sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW, created_by=_OTHER_USER_ID)
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 403
+
+
+def test_generate_report_rejects_when_not_issued(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW, status="approved"))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 409
+
+
+def test_generate_report_404_when_session_not_found(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: None)
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 404
+
+
+def test_generate_report_500_when_storage_upload_fails(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    monkeypatch.setattr(readings_repo, "list_readings", _fake_list_readings_weighing_only)
+    monkeypatch.setattr(readings_repo, "list_results", _fake_list_results_weighing_only)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+
+    def failing_upload(client, **kwargs):
+        raise storage_repo.StorageError(operation="upload", hint="bucket unreachable")
+
+    monkeypatch.setattr(storage_repo, "upload_report_pdf", failing_upload)
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 500
+
+
+def test_generate_report_succeeds_even_if_recording_storage_path_fails(monkeypatch):
+    # Non-fatal by design (app/routers/sessions.py): the PDF is already
+    # generated and uploaded, and its path is fully deterministic from the
+    # certificate number, so a failure here must not fail the response.
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    monkeypatch.setattr(readings_repo, "list_readings", _fake_list_readings_weighing_only)
+    monkeypatch.setattr(readings_repo, "list_results", _fake_list_results_weighing_only)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(storage_repo, "upload_report_pdf", lambda client, **kwargs: kwargs["path"])
+
+    def failing_set_path(client, session_id, path):
+        raise RepositoryError(table="test_sessions", operation="rpc", hint="simulated failure", likely_rls=False)
+
+    monkeypatch.setattr(sessions_repo, "set_report_storage_path", failing_set_path)
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"%PDF"

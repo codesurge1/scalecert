@@ -3,7 +3,7 @@ from typing import Optional
 from supabase import Client
 
 from app.contracts.session import SessionIn, session_insert_payload
-from app.repositories.errors import run_insert, run_rpc, run_select, run_update
+from app.repositories.errors import run_insert, run_rpc, run_rpc_void, run_select, run_update
 
 SESSIONS_TABLE = "test_sessions"
 SELECTIONS_TABLE = "session_test_selection"
@@ -112,4 +112,23 @@ def issue_certificate_number(client: Client) -> str:
         client.rpc("issue_certificate_number", {}),
         table=CERTIFICATE_SEQUENCE,
         hint="generating the next certificate number via issue_certificate_number()",
+    )
+
+
+def set_report_storage_path(client: Client, session_id: str, path: str) -> None:
+    """Calls the `set_report_storage_path()` Postgres function (ADR-0009)
+    to record where a generated certificate PDF was stored, on a session
+    whose status is `issued`. A plain `.update()` cannot do this: once a
+    session's status is `issued` it matches NO UPDATE policy on
+    `test_sessions` at all (docs/architecture.md, Session lifecycle —
+    "issued sessions are immutable at the database"), by design, for every
+    OTHER column. This function is a narrow, purpose-built exception to
+    exactly that immutability, scoped to this one column and re-checking
+    the same creator-or-approver/admin authorization the API layer already
+    enforces — it does not reopen general mutability of an issued session.
+    """
+    run_rpc_void(
+        client.rpc("set_report_storage_path", {"p_session_id": session_id, "p_path": path}),
+        table=SESSIONS_TABLE,
+        hint=f"recording report_storage_path for session {session_id!r}",
     )
