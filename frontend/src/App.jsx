@@ -14,11 +14,16 @@ import { EccentricitySessionPage } from "@/pages/EccentricitySessionPage";
 import { DiscriminationSessionPage } from "@/pages/DiscriminationSessionPage";
 import { SensitivitySessionPage } from "@/pages/SensitivitySessionPage";
 import { TiltingSessionPage } from "@/pages/TiltingSessionPage";
+import { VerifyPage } from "@/pages/VerifyPage";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public, login-free — deliberately OUTSIDE AuthGate/AppShell.
+          Reachable by anyone with the certificate's QR code/URL, no
+          Supabase session required (docs/architecture.md, ADR-0009). */}
+      <Route path="/verify/:certNumber" element={<VerifyPage />} />
 
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>

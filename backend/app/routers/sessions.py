@@ -1,8 +1,9 @@
 import logging
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.contracts.common import IndicationType, SessionStatus, TestType
 from app.contracts.discrimination import (
@@ -19,7 +20,7 @@ from app.contracts.eccentricity import (
     EccentricitySetupOut,
     reading_and_result_to_record_out as eccentricity_reading_and_result_to_record_out,
 )
-from app.contracts.instrument import instrument_params_from_row
+from app.contracts.instrument import instrument_out_from_row, instrument_params_from_row
 from app.contracts.repeatability import RepeatabilityReadingSubmitIn, RepeatabilitySeriesOut
 from app.contracts.sensitivity import (
     SensitivityCheckOut,
@@ -45,11 +46,14 @@ from app.contracts.zero_tare import (
     reading_and_result_to_record_out as zero_tare_reading_and_result_to_record_out,
 )
 from app.deps import AuthContext, get_auth_context
+from app.pdf.certificate import generate_certificate_pdf
 from app.repositories import instruments as instruments_repo
 from app.repositories import profiles as profiles_repo
 from app.repositories import readings as readings_repo
 from app.repositories import sessions as sessions_repo
+from app.repositories import storage as storage_repo
 from app.repositories.errors import RepositoryError
+from app.services import certificate as certificate_service
 from app.services import discrimination as discrimination_service
 from app.services import eccentricity as eccentricity_service
 from app.services import repeatability as repeatability_service
@@ -1189,3 +1193,162 @@ def submit_tilting_reading(
         logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
 
     return state
+
+
+# ---------------------------------------------------------------------------
+# Certificate PDF generation (Part A) — an issued session's report, stored
+# in Supabase Storage (never local disk, CLAUDE.md) and returned directly
+# so the caller has an immediate download. See app/services/certificate.py
+# and app/pdf/certificate.py for the data-assembly/rendering split.
+# ---------------------------------------------------------------------------
+
+_OTHER_TEST_LABELS = {
+    "zero_tare": "Zero/tare device accuracy",
+    "repeatability": "Repeatability",
+    "eccentricity": "Eccentricity (3.1 weights)",
+    "discrimination": "Discrimination",
+    "sensitivity": "Sensitivity",
+    "tilting": "Tilting",
+}
+
+
+def _verify_url(request: Request, certificate_number: str) -> str:
+    override = os.environ.get("PUBLIC_APP_BASE_URL")
+    base = override or str(request.base_url)
+    return f"{base.rstrip('/')}/verify/{certificate_number}"
+
+
+def _build_certificate_data(client, session_row: dict, instrument_row: dict) -> certificate_service.CertificateData:
+    instrument = instrument_out_from_row(instrument_row)
+    instrument_params = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+    session_id = session_row["id"]
+
+    weighing_reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    weighing_result_rows = readings_repo.list_results(client, session_id=session_id, test_type=TestType.WEIGHING.value)
+    weighing_rows = certificate_service.weighing_rows_from_db(weighing_reading_rows, weighing_result_rows)
+    overall_weighing = certificate_service.weighing_overall_passed(weighing_rows)
+
+    # Zero/tare: the SAME weighing rows, but only the ones with direction
+    # IS null (docs/architecture.md) — a distinct sub-procedure with its
+    # own independent per-check verdicts, summarized rather than tabulated.
+    zero_tare_reading_ids = {row["id"] for row in weighing_reading_rows if row.get("direction") is None}
+    zero_tare_passed = [
+        row["passed"] for row in weighing_result_rows if row.get("reading_id") in zero_tare_reading_ids
+    ]
+    zero_tare_summary = certificate_service.simple_passed_summary(
+        _OTHER_TEST_LABELS["zero_tare"], zero_tare_passed
+    )
+
+    eccentricity_passed = [
+        row["passed"]
+        for row in readings_repo.list_results(client, session_id=session_id, test_type=TestType.ECCENTRICITY.value)
+    ]
+    eccentricity_summary = certificate_service.simple_passed_summary(
+        _OTHER_TEST_LABELS["eccentricity"], eccentricity_passed
+    )
+
+    discrimination_passed = [
+        row["passed"]
+        for row in readings_repo.list_results(client, session_id=session_id, test_type=TestType.DISCRIMINATION.value)
+    ]
+    discrimination_summary = certificate_service.simple_passed_summary(
+        _OTHER_TEST_LABELS["discrimination"], discrimination_passed
+    )
+
+    sensitivity_passed = [
+        row["passed"]
+        for row in readings_repo.list_results(client, session_id=session_id, test_type=TestType.SENSITIVITY.value)
+    ]
+    sensitivity_summary = certificate_service.simple_passed_summary(
+        _OTHER_TEST_LABELS["sensitivity"], sensitivity_passed
+    )
+
+    # Repeatability/Tilting need their OWN aggregate logic (mpe+spread;
+    # whole-dataset criteria) — recomputed via the exact same service
+    # functions their own GET routes call, not a naive per-reading scan.
+    repeatability_series = [
+        repeatability_service.compute_series(
+            instrument_params, verification_type, series_no, _repeatability_stored_readings(client, session_id, series_no)
+        )
+        for series_no in (1, 2)
+    ]
+    repeatability_summary = certificate_service.series_aggregate_summary(
+        _OTHER_TEST_LABELS["repeatability"], repeatability_series
+    )
+
+    tilting_state = tilting_service.compute_state(
+        instrument_params, verification_type, _tilting_stored_readings(client, session_id)
+    )
+    tilting_summary = certificate_service.state_summary(_OTHER_TEST_LABELS["tilting"], tilting_state)
+
+    return certificate_service.CertificateData(
+        certificate_number=session_row["certificate_number"],
+        verification_type=verification_type.value,
+        issued_at=session_row.get("issued_at"),
+        approved_at=session_row.get("approved_at"),
+        instrument=instrument,
+        weighing_rows=weighing_rows,
+        weighing_overall_passed=overall_weighing,
+        other_tests=[
+            zero_tare_summary,
+            repeatability_summary,
+            eccentricity_summary,
+            discrimination_summary,
+            tilting_summary,
+            sensitivity_summary,
+        ],
+    )
+
+
+@router.post("/{session_id}/report")
+def generate_session_report(
+    session_id: str, request: Request, auth: AuthContext = Depends(get_auth_context)
+) -> Response:
+    """Generates the certificate PDF for an ISSUED session, stores it in
+    Supabase Storage, and returns the PDF bytes directly — approver/admin
+    or the session's own creator only (item 1's authorization is
+    deliberately broader than the lifecycle-transition endpoints above:
+    generating a copy of your OWN already-issued certificate is not a
+    separation-of-duties-sensitive action)."""
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    role = profiles_repo.get_role(auth.client, auth.user_id)
+    is_creator = auth.user_id == session_row["created_by"]
+    is_approver_or_admin = role in ("approver", "admin")
+    if not (is_creator or is_approver_or_admin):
+        raise HTTPException(
+            status_code=403,
+            detail="only the session's creator, an approver, or an admin may generate this report",
+        )
+
+    try:
+        ensure_status(SessionStatus(session_row["status"]), SessionStatus.ISSUED, "generate this session's certificate report")
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    data = _build_certificate_data(auth.client, session_row, instrument_row)
+    verify_url = _verify_url(request, session_row["certificate_number"])
+    pdf_bytes = generate_certificate_pdf(data, verify_url)
+
+    storage_path = f"certificates/{session_row['certificate_number']}.pdf"
+    try:
+        storage_repo.upload_report_pdf(auth.client, path=storage_path, pdf_bytes=pdf_bytes)
+    except storage_repo.StorageError as exc:
+        raise HTTPException(status_code=500, detail=f"could not store the generated certificate: {exc}") from exc
+
+    # Non-fatal: `storage_path` is fully deterministic from
+    # `certificate_number` alone, so even if this bookkeeping write fails,
+    # the PDF itself is already safely stored and already in hand — unlike
+    # a return-reason, nothing here is lost if this one call fails.
+    try:
+        sessions_repo.set_report_storage_path(auth.client, session_id, storage_path)
+    except RepositoryError as exc:
+        logger.warning("could not record report_storage_path for session %s: %s", session_id, exc)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{session_row["certificate_number"]}.pdf"'},
+    )

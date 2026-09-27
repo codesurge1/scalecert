@@ -151,13 +151,18 @@ def run_update(query, *, table: str, hint: str) -> dict:
 
 def run_rpc(query, *, table: str, hint: str):
     """Execute a Supabase `.rpc(name, params)`-style query and return its
-    scalar `.data`. A Postgres function that itself raises (e.g. a role
-    check via `RAISE EXCEPTION ... USING ERRCODE = '42501'`) surfaces here
-    as an `APIError` exactly like a rejected INSERT/UPDATE does, so the
-    same RLS-code detection applies. Used for `issue_certificate_number()`
-    — the one place this app calls a stored procedure rather than a plain
-    table operation, since consuming a Postgres sequence atomically has no
-    other path through PostgREST's table-only REST surface.
+    SCALAR `.data`, where an empty/falsy result IS abnormal (the function
+    is expected to always return a value on success) — used for
+    `issue_certificate_number()`, the one place this app calls a stored
+    procedure rather than a plain table operation, since consuming a
+    Postgres sequence atomically has no other path through PostgREST's
+    table-only REST surface. A Postgres function that itself raises (e.g.
+    a role check via `RAISE EXCEPTION ... USING ERRCODE = '42501'`)
+    surfaces here as an `APIError` exactly like a rejected INSERT/UPDATE
+    does, so the same RLS-code detection applies. See `run_rpc_list` and
+    `run_rpc_void` for the two other RPC return shapes this app uses —
+    each function's own return contract decides which of the three fits,
+    never a flag on one do-everything helper.
     """
     try:
         response = query.execute()
@@ -178,3 +183,42 @@ def run_rpc(query, *, table: str, hint: str):
             likely_rls=True,
         )
     return response.data
+
+
+def run_rpc_list(query, *, table: str, hint: str) -> list:
+    """Execute an `.rpc(...)`-style query whose function `RETURNS TABLE`
+    (so a list of rows, possibly EMPTY, is a normal, valid outcome) — used
+    for `get_public_certificate_info()`: no matching certificate, or one
+    that exists but isn't `issued`, both come back as zero rows, by
+    design (ADR-0009) — never distinguished, never an error. Only an
+    outright `APIError` becomes a `RepositoryError`, same as `run_select`.
+    """
+    try:
+        return query.execute().data
+    except APIError as exc:
+        raise RepositoryError(
+            table=table,
+            operation="rpc",
+            hint=f"{hint} — PostgREST error {exc.code}: {exc.message}",
+            likely_rls=_is_rls_error(exc),
+            cause=exc,
+        ) from exc
+
+
+def run_rpc_void(query, *, table: str, hint: str) -> None:
+    """Execute an `.rpc(...)`-style query whose function `RETURNS void` (or
+    whose return value the caller doesn't need) — used for
+    `set_report_storage_path()`. There is no `.data` to check for
+    emptiness, so (unlike `run_rpc`) a falsy result is NOT an error; only
+    an outright `APIError` becomes a `RepositoryError`.
+    """
+    try:
+        query.execute()
+    except APIError as exc:
+        raise RepositoryError(
+            table=table,
+            operation="rpc",
+            hint=f"{hint} — PostgREST error {exc.code}: {exc.message}",
+            likely_rls=_is_rls_error(exc),
+            cause=exc,
+        ) from exc

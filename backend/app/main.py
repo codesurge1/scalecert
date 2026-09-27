@@ -8,6 +8,7 @@ from app.deps import AuthContext, get_auth_context
 from app.repositories.errors import RepositoryError
 from app.routers.instruments import router as instruments_router
 from app.routers.sessions import router as sessions_router
+from app.routers.verify import router as verify_router
 
 app = FastAPI(title="ScaleCert API — walking skeleton")
 
@@ -77,5 +78,6 @@ def whoami_debug(auth: AuthContext = Depends(get_auth_context)):
 
 api.include_router(instruments_router)
 api.include_router(sessions_router)
+api.include_router(verify_router)
 
 app.include_router(api)

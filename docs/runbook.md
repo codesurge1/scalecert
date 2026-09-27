@@ -14,6 +14,7 @@ Keys from `.env.example`:
 - `SUPABASE_SERVICE_ROLE_KEY` — backend only; never for user-scoped queries.
 - `DATABASE_URL` — POOLED connection string (Supavisor, transaction mode), not the direct connection.
 - `SUPABASE_STORAGE_BUCKET=reports` — Storage bucket for generated PDF certificates/reports.
+- `PUBLIC_APP_BASE_URL` — optional; overrides the base URL a certificate's QR code points at. Leave blank to derive it from the incoming request's own Host (correct by default — frontend and backend share one domain, docs/architecture.md).
 
 ## Local setup
 
@@ -28,6 +29,8 @@ To set up a fresh project:
 4. Run `db/seed.sql` to promote the approver account.
 
 To reset: drop and recreate the project (or its schema), then re-run `db/schema.sql` and `db/seed.sql`.
+
+For an already-provisioned (live) project that must not be reset, run the standalone additive migration files under `db/migrations/` instead — each brings that one live project up to date without touching existing data (ADR-0007's narrow exception to the "reset on every change" default): `002_registration_fields.sql` (the R 76-2 page-6 instrument fields), `003_pdf_certificate_and_verify.sql` (the `discrepancy_reports` table and the two `SECURITY DEFINER` functions this task adds — `set_report_storage_path`, `get_public_certificate_info`; see ADR-0009). Idempotent — re-running either is a no-op.
 
 ## Deploy (Vercel)
 

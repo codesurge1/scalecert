@@ -8,7 +8,15 @@ failure shapes CLAUDE.md calls out: an explicit PostgREST error, and a
 import pytest
 from postgrest.exceptions import APIError
 
-from app.repositories.errors import RepositoryError, run_insert, run_rpc, run_select, run_update
+from app.repositories.errors import (
+    RepositoryError,
+    run_insert,
+    run_rpc,
+    run_rpc_list,
+    run_rpc_void,
+    run_select,
+    run_update,
+)
 
 
 class _FakeResponse:
@@ -172,6 +180,57 @@ def test_run_rpc_wraps_api_error_from_a_raised_postgres_exception():
     query = _FakeQuery(raises=_api_error("42501", "insufficient_privilege: only an approver or admin may issue a certificate number"))
     with pytest.raises(RepositoryError) as excinfo:
         run_rpc(query, table="certificate_number_seq", hint="issuing a certificate number")
+    exc = excinfo.value
+    assert exc.operation == "rpc"
+    assert exc.likely_rls is True
+    assert "42501" in exc.hint
+
+
+# ---------------------------------------------------------------------------
+# run_rpc_list — used for get_public_certificate_info(), a RETURNS TABLE
+# function where an empty list is a normal, valid "not found or not
+# issued" outcome, never an error (unlike run_rpc's scalar contract).
+# ---------------------------------------------------------------------------
+def test_run_rpc_list_returns_rows_on_success():
+    rows = run_rpc_list(
+        _FakeQuery(data=[{"certificate_number": "SC-2026-000001"}]),
+        table="test_sessions",
+        hint="looking up a certificate",
+    )
+    assert rows == [{"certificate_number": "SC-2026-000001"}]
+
+
+def test_run_rpc_list_returns_empty_list_as_is_not_an_error():
+    # The exact "not found, or found but not issued" case — must never
+    # raise, so the router can turn it into a clean 404 itself.
+    rows = run_rpc_list(_FakeQuery(data=[]), table="test_sessions", hint="looking up a certificate")
+    assert rows == []
+
+
+def test_run_rpc_list_wraps_api_error():
+    query = _FakeQuery(raises=_api_error("42883", "function does not exist"))
+    with pytest.raises(RepositoryError) as excinfo:
+        run_rpc_list(query, table="test_sessions", hint="looking up a certificate")
+    assert excinfo.value.operation == "rpc"
+    assert excinfo.value.likely_rls is False
+
+
+# ---------------------------------------------------------------------------
+# run_rpc_void — used for set_report_storage_path(), a RETURNS void
+# function with no meaningful .data to check at all.
+# ---------------------------------------------------------------------------
+def test_run_rpc_void_succeeds_without_raising():
+    # Must not raise even though .data is falsy (None/empty) on a void call
+    # — that is the expected, successful shape, not an error.
+    run_rpc_void(_FakeQuery(data=None), table="test_sessions", hint="setting report_storage_path")
+
+
+def test_run_rpc_void_wraps_api_error_from_a_raised_postgres_exception():
+    query = _FakeQuery(
+        raises=_api_error("42501", "insufficient_privilege: report_storage_path may only be set on an issued session")
+    )
+    with pytest.raises(RepositoryError) as excinfo:
+        run_rpc_void(query, table="test_sessions", hint="setting report_storage_path")
     exc = excinfo.value
     assert exc.operation == "rpc"
     assert exc.likely_rls is True
