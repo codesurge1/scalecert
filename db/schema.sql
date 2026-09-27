@@ -28,7 +28,15 @@ create type test_type as enum (
   'voltage_variations',        -- A.5.4  (clause 11 — computed)
   'ac_mains_dips',              -- B.3.1  (clause 12.1 — record-only)
   'electrical_bursts',          -- B.3.2  (clause 12.2 — record-only)
-  'electrostatic_discharges'    -- B.3.4  (clause 12.4 — record-only)
+  'electrostatic_discharges',   -- B.3.4  (clause 12.4 — record-only)
+  -- Added feat/damp-heat-endurance. Both reuse the Weighing engine/formula
+  -- verbatim across multiple runs (feat/test-runs-conditions' `test_runs`
+  -- table) — no new engine math, see docs/architecture.md. For an
+  -- ALREADY-PROVISIONED project these two values must be added via
+  -- `ALTER TYPE test_type ADD VALUE` instead of a fresh apply of this
+  -- file — see db/migrations/006_damp_heat_endurance_test_types.sql.
+  'damp_heat',                  -- B.2    (clause 13 — a/b/c runs, computed via the Weighing engine)
+  'endurance'                   -- A.6    (clause 15 — a/c runs + compute_run_comparison durability check)
 );
 
 -- ============ CORE TABLES ============

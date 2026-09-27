@@ -239,6 +239,21 @@ class RunComparisonResult:
 
 
 @dataclass(frozen=True)
+class DurabilityCheckResult:
+    """Endurance's own verdict rule (R76-1 A.6, R76-2 page 47): the
+    durability error due to wear and tear (`RunComparisonResult.variation_error`,
+    `|Ec_initial - Ec_final|`) must be `<= mpe` for EVERY load, not just
+    some — a genuinely different aggregation from a single
+    compute_run_comparison call, mirroring Repeatability's/Tilting's own
+    "whole-set aggregate, not a single reading" shape (engine/comparison.py,
+    compute_durability_check). `comparisons` is the full per-load list this
+    verdict was derived from, never dropped in favor of a bare boolean."""
+
+    comparisons: Tuple[RunComparisonResult, ...]
+    all_passed: bool
+
+
+@dataclass(frozen=True)
 class TiltingLoadedCheckResult:
     """Tilting's criterion (b) (engine/tilting.py), checked independently at
     each of the two loaded rows (a mid load and Max): the corrected error at

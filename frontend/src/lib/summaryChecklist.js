@@ -110,10 +110,14 @@ export const SUMMARY_ROWS = [
   {
     number: "13",
     label: "Damp heat, steady state",
+    // Added feat/damp-heat-endurance. All three sub-rows open the SAME
+    // test/route — one page with three labelled runs (a/b/c), not three
+    // separately-routed tests, same "one combined form" convention
+    // 12.2/12.4 already established.
     subRows: [
-      { label: "a) Initial test (at reference temperature)", placeholder: true },
-      { label: "b) Test at high temperature and 85 % relative humidity", placeholder: true },
-      { label: "c) Final test (at reference temperature)", placeholder: true },
+      { label: "a) Initial test (at reference temperature)", testKey: "damp_heat" },
+      { label: "b) Test at high temperature and 85 % relative humidity", testKey: "damp_heat" },
+      { label: "c) Final test (at reference temperature)", testKey: "damp_heat" },
     ],
   },
   { number: "14", label: "Span stability", placeholder: true },
@@ -121,8 +125,8 @@ export const SUMMARY_ROWS = [
     number: "15",
     label: "Endurance",
     subRows: [
-      { label: "a) Initial test", placeholder: true },
-      { label: "c) Final test", placeholder: true },
+      { label: "a) Initial test", testKey: "endurance" },
+      { label: "c) Final test", testKey: "endurance" },
     ],
   },
   { sectionHeader: "EXAMINATIONS" },

@@ -12,8 +12,25 @@ import { cn } from "@/lib/utils";
  * or behaves for the single-run technician. "Initial" always represents
  * the implicit default/only run (`null` run_id) — it is never itself a
  * `test_runs` row, so it's always present without needing to be created.
+ *
+ * Reused as-is (feat/damp-heat-endurance) by Damp heat/Endurance, whose
+ * runs are a FIXED, auto-provisioned set (a/b/c, a/c — see
+ * `POST .../damp-heat/setup` / `.../endurance/setup`) rather than
+ * technician-labelled ones: `showDefaultTab={false}` (there is no
+ * implicit default/only run for either test — every reading belongs to
+ * one of the fixed runs) and `onCreateRun` simply omitted, which hides
+ * the "+ Add run" affordance entirely — nothing here lets a technician
+ * add an extra, unplanned run to either of those two tests.
  */
-export function RunSelector({ runs, selectedRunId, onSelectRun, onCreateRun, disabled }) {
+export function RunSelector({
+  runs,
+  selectedRunId,
+  onSelectRun,
+  onCreateRun,
+  disabled,
+  showDefaultTab = true,
+  defaultTabLabel = "Initial",
+}) {
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
   const [temperature, setTemperature] = useState("");
@@ -40,26 +57,28 @@ export function RunSelector({ runs, selectedRunId, onSelectRun, onCreateRun, dis
     }
   }
 
-  if (!hasRuns && !adding && disabled) {
-    return null; // read-only session, nothing created — show nothing at all
+  if (!hasRuns && !adding && (disabled || !onCreateRun)) {
+    return null; // nothing to show and nothing creatable — render nothing at all
   }
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
       {hasRuns ? (
         <>
-          <button
-            type="button"
-            className={cn(
-              "rounded border px-2 py-1",
-              selectedRunId === null
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-400 text-neutral-700 hover:bg-neutral-50",
-            )}
-            onClick={() => onSelectRun(null)}
-          >
-            Initial
-          </button>
+          {showDefaultTab ? (
+            <button
+              type="button"
+              className={cn(
+                "rounded border px-2 py-1",
+                selectedRunId === null
+                  ? "border-neutral-900 bg-neutral-900 text-white"
+                  : "border-neutral-400 text-neutral-700 hover:bg-neutral-50",
+              )}
+              onClick={() => onSelectRun(null)}
+            >
+              {defaultTabLabel}
+            </button>
+          ) : null}
           {runs.map((run) => (
             <button
               key={run.id}
@@ -78,7 +97,7 @@ export function RunSelector({ runs, selectedRunId, onSelectRun, onCreateRun, dis
         </>
       ) : null}
 
-      {disabled ? null : adding ? (
+      {!onCreateRun || disabled ? null : adding ? (
         <div className="flex items-center gap-1.5">
           <input
             className="h-7 w-36 rounded border border-neutral-400 px-1.5 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-neutral-900"

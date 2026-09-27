@@ -1,15 +1,18 @@
 """Pure orchestration for runs/conditions (feat/test-runs-conditions) and
 cross-run comparison — no DB, no HTTP. `compare_records` is deliberately
 generic over any reading-record shape that carries `sequence_no`,
-`direction`, `Ec`, and `mpe` (today only `WeighingReadingRecordOut` does) so
-Damp heat and Endurance can reuse it unmodified once they're built.
+`direction`, `Ec`, and `mpe` (today `WeighingReadingRecordOut`,
+`DampHeatReadingRecordOut`, and `EnduranceReadingRecordOut` all do) so
+Damp heat and Endurance (feat/damp-heat-endurance) reuse it unmodified,
+exactly as `feat/test-runs-conditions` intended when it was written.
 """
 
 from typing import Optional, Protocol
 
 from app.contracts.common import Direction
 from app.contracts.runs import RunComparisonEntryOut, comparison_result_to_out
-from engine.comparison import compute_run_comparison
+from engine.comparison import compute_durability_check, compute_run_comparison
+from engine.types import DurabilityCheckResult, RunComparisonResult
 
 
 def next_ordinal(existing_runs: list[dict]) -> int:
@@ -18,6 +21,18 @@ def next_ordinal(existing_runs: list[dict]) -> int:
     technician explicitly creates gets ordinal 0 (the implicit default run,
     NULL run_id, has no ordinal of its own — it isn't a `test_runs` row)."""
     return len(existing_runs)
+
+
+def ensure_fixed_run_labels(existing_runs: list[dict], fixed_labels: list[str]) -> list[str]:
+    """Which of `fixed_labels` don't yet exist among `existing_runs` (exact
+    `run_label` match) — the caller creates exactly these, in order, so
+    calling this again against the resulting state is always a no-op
+    (idempotent setup), never a duplicate run. Used by tests whose runs are
+    a FIXED, known-in-advance structure (Damp heat's a/b/c, Endurance's
+    a/c) rather than technician-labelled ones like Weighing's own optional
+    extra runs."""
+    existing_labels = {run["run_label"] for run in existing_runs}
+    return [label for label in fixed_labels if label not in existing_labels]
 
 
 class _ComparableRecord(Protocol):
@@ -57,3 +72,25 @@ def compare_records(
         )
     entries.sort(key=lambda entry: (entry.sequence_no, entry.direction.value if entry.direction else ""))
     return entries
+
+
+def durability_check_from_entries(entries: list[RunComparisonEntryOut]) -> DurabilityCheckResult:
+    """Endurance's own aggregate (`engine.comparison.compute_durability_check`)
+    layered on top of `compare_records`' own per-load output, rather than
+    threading a second parallel list through `compare_records` itself —
+    `RunComparisonEntryOut` and `RunComparisonResult` share the exact same
+    Ec_a/Ec_b/variation_error/mpe/margin/passed fields (the former is the
+    latter plus load identity), so reconstructing one from the other loses
+    nothing."""
+    comparisons = [
+        RunComparisonResult(
+            Ec_a=entry.Ec_a,
+            Ec_b=entry.Ec_b,
+            variation_error=entry.variation_error,
+            mpe=entry.mpe,
+            margin=entry.margin,
+            passed=entry.passed,
+        )
+        for entry in entries
+    ]
+    return compute_durability_check(comparisons)

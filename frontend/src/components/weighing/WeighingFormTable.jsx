@@ -132,11 +132,16 @@ export function WeighingFormTable({
   initialReadings,
   actorId,
   runId = null,
+  apiPath = "weighing",
   runs,
   selectedRunId = null,
   onSelectRun,
   onCreateRun,
+  showDefaultRunTab = true,
+  defaultRunTabLabel = "Initial",
   comparison,
+  comparisonLabel = "Initial compared to the currently selected run",
+  durabilityVerdict,
 }) {
   const [testDate, setTestDate] = useState(todayIso());
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -161,6 +166,7 @@ export function WeighingFormTable({
     e0,
     actorId,
     runId,
+    apiPath,
   });
 
   // The guided panel's "where am I" pointer — shared state, not owned by
@@ -291,10 +297,15 @@ export function WeighingFormTable({
             job to stay minimal in that case); becomes a small tab bar +
             "Add run" control once a technician creates a second run, e.g.
             re-running this same Weighing test at a different temperature
-            (OIML R76-2 page 9). `onSelectRun`/`onCreateRun` are optional —
-            omitted entirely, this renders nothing, so any other caller of
-            this component (there is none today) stays unaffected. */}
-        {onSelectRun && onCreateRun ? (
+            (OIML R76-2 page 9). `onSelectRun` omitted entirely means this
+            renders nothing, so any other caller of this component (there
+            is none today) stays unaffected. Damp heat/Endurance
+            (feat/damp-heat-endurance) reuse this same tab bar for their
+            own FIXED a/b/c or a/c runs — `showDefaultRunTab={false}` (no
+            implicit default run for either test) and `onCreateRun`
+            omitted (nothing lets a technician add an extra run to
+            either). */}
+        {onSelectRun ? (
           <div className="lg:shrink-0">
             <RunSelector
               runs={runs}
@@ -302,6 +313,8 @@ export function WeighingFormTable({
               onSelectRun={onSelectRun}
               onCreateRun={onCreateRun}
               disabled={disabled}
+              showDefaultTab={showDefaultRunTab}
+              defaultTabLabel={defaultRunTabLabel}
             />
           </div>
         ) : null}
@@ -576,7 +589,7 @@ export function WeighingFormTable({
             <div className="mt-3 shrink-0 overflow-auto">
               <p className="text-sm">
                 Variation between runs (|Δ<i>E</i>
-                <sub>c</sub>| vs mpe) — Initial compared to the currently selected run:
+                <sub>c</sub>| vs mpe) — {comparisonLabel}:
               </p>
               <table className="mt-1.5 w-full border-collapse text-xs">
                 <thead>
@@ -621,6 +634,21 @@ export function WeighingFormTable({
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : null}
+
+          {/* Endurance's own aggregate verdict (feat/damp-heat-endurance,
+              R76-2 page 47): "Check if the durability error due to wear
+              and tear is <= mpe" — EVERY load, not just the ones shown
+              above happening to pass individually. Weighing/Damp heat
+              never pass this prop, so this renders nothing for them. */}
+          {durabilityVerdict ? (
+            <div className="mt-3 shrink-0">
+              <p className="text-sm">Check if the durability error due to wear and tear is ≤ mpe</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-8 gap-y-2">
+                <FormCheckbox label="Passed" checked={durabilityVerdict.allPassed === true} readOnly />
+                <FormCheckbox label="Failed" checked={durabilityVerdict.allPassed === false} readOnly />
+              </div>
             </div>
           ) : null}
 

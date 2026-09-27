@@ -18,6 +18,8 @@ import { VoltageVariationsSessionPage } from "@/pages/VoltageVariationsSessionPa
 import { AcMainsDipsSessionPage } from "@/pages/AcMainsDipsSessionPage";
 import { ElectricalBurstsSessionPage } from "@/pages/ElectricalBurstsSessionPage";
 import { ElectrostaticDischargesSessionPage } from "@/pages/ElectrostaticDischargesSessionPage";
+import { DampHeatSessionPage } from "@/pages/DampHeatSessionPage";
+import { EnduranceSessionPage } from "@/pages/EnduranceSessionPage";
 import { SessionsListPage } from "@/pages/SessionsListPage";
 import { DiscrepancyReportsPage } from "@/pages/DiscrepancyReportsPage";
 import { AuditTrailPage } from "@/pages/AuditTrailPage";
@@ -74,6 +76,12 @@ export default function App() {
           <Route path="/sessions/:id/ac-mains-dips" element={<AcMainsDipsSessionPage />} />
           <Route path="/sessions/:id/electrical-bursts" element={<ElectricalBurstsSessionPage />} />
           <Route path="/sessions/:id/electrostatic-discharges" element={<ElectrostaticDischargesSessionPage />} />
+          {/* Clause 13 (Damp heat) + clause 15 (Endurance) —
+              feat/damp-heat-endurance. Both reuse WeighingFormTable
+              verbatim, one run at a time, via the runs/conditions
+              infrastructure (feat/test-runs-conditions). */}
+          <Route path="/sessions/:id/damp-heat" element={<DampHeatSessionPage />} />
+          <Route path="/sessions/:id/endurance" element={<EnduranceSessionPage />} />
         </Route>
       </Route>
 

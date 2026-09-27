@@ -69,6 +69,11 @@ class TestType(str, Enum):
     AC_MAINS_DIPS = "ac_mains_dips"
     ELECTRICAL_BURSTS = "electrical_bursts"
     ELECTROSTATIC_DISCHARGES = "electrostatic_discharges"
+    # Added feat/damp-heat-endurance — clause 13 (Damp heat) and clause 15
+    # (Endurance), both reusing the Weighing engine across multiple runs
+    # (feat/test-runs-conditions). See db/migrations/006_damp_heat_endurance_test_types.sql.
+    DAMP_HEAT = "damp_heat"
+    ENDURANCE = "endurance"
 
 
 def _parse_strict_decimal(value: Any) -> Decimal:

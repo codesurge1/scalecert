@@ -44,8 +44,22 @@ const EMPTY_CELL = { indication: "", deltaL: "0", result: null, submitting: fals
  * hook a fresh instance per run; this hook itself has no run-switching
  * logic, by design — it only ever seeds `cells` once, from whichever
  * run's `initialReadings` it was constructed with.
+ *
+ * `apiPath` (feat/damp-heat-endurance) is which test's readings endpoint
+ * to POST to — defaults to `"weighing"`, unchanged for every existing
+ * caller; Damp heat/Endurance pass `"damp-heat"`/`"endurance"` so
+ * `WeighingFormTable` can be reused verbatim for their own, differently-
+ * routed but identically-shaped submission.
  */
-export function useWeighingReadings({ sessionId, sessionStatus, initialReadings, e0, actorId, runId = null }) {
+export function useWeighingReadings({
+  sessionId,
+  sessionStatus,
+  initialReadings,
+  e0,
+  actorId,
+  runId = null,
+  apiPath = "weighing",
+}) {
   const disabled = sessionStatus !== "draft";
 
   // Lazily seeded from initialReadings once, on mount — this page is keyed
@@ -92,7 +106,7 @@ export function useWeighingReadings({ sessionId, sessionStatus, initialReadings,
       .insert({
         session_id: sessionId,
         actor_id: actorId,
-        action: "weighing_reading_amended",
+        action: `${apiPath.replace(/-/g, "_")}_reading_amended`,
         data: { sequence_no: sequenceNo, direction: apiDirection, before, after },
       })
       .then(({ error }) => {
@@ -123,7 +137,7 @@ export function useWeighingReadings({ sessionId, sessionStatus, initialReadings,
       run_id: runId,
     };
     try {
-      const res = await apiFetch(`/sessions/${sessionId}/weighing/readings`, { method: "POST", body: payload });
+      const res = await apiFetch(`/sessions/${sessionId}/${apiPath}/readings`, { method: "POST", body: payload });
       updateCell(entry.sequence_no, apiDirection, { result: res, submitting: false, error: null });
 
       const after = { I: payload.I, delta_l: payload.delta_l };

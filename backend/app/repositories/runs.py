@@ -2,7 +2,7 @@ from typing import Optional
 
 from supabase import Client
 
-from app.repositories.errors import run_insert, run_select
+from app.repositories.errors import run_insert, run_select, run_update
 
 RUNS_TABLE = "test_runs"
 
@@ -48,3 +48,14 @@ def get_run(client: Client, run_id: str) -> Optional[dict]:
         hint=f"looking up run {run_id!r}",
     )
     return rows[0] if rows else None
+
+
+def update_run_conditions(client: Client, *, run_id: str, conditions: Optional[dict]) -> dict:
+    """Updates ONLY a run's `conditions` JSONB in place (feat/damp-heat-endurance)
+    — e.g. Endurance's cycling step, filled in on the Final run after it
+    already exists. Never touches `run_label`/`ordinal`/`test_type`."""
+    return run_update(
+        client.table(RUNS_TABLE).update({"conditions": conditions}).eq("id", run_id),
+        table=RUNS_TABLE,
+        hint="updating a run's conditions — check policy 'runs_write' (requires a visible, own, draft-status session)",
+    )

@@ -99,6 +99,13 @@ export const TEST_ROWS = [
       instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
     route: (sessionId) => `/sessions/${sessionId}/electrostatic-discharges`,
   },
+  // Added feat/damp-heat-endurance — clause 13 and clause 15, both
+  // re-running the same Weighing procedure across multiple runs
+  // (feat/test-runs-conditions). Applicable to every instrument — unlike
+  // clause 11/12.x, there's no electronics-only gate here (Damp heat and
+  // Endurance stress the mechanism itself, not just its indication).
+  { key: "damp_heat", label: "Damp heat, steady state", clause: "B.2", route: (sessionId) => `/sessions/${sessionId}/damp-heat` },
+  { key: "endurance", label: "Endurance", clause: "A.6", route: (sessionId) => `/sessions/${sessionId}/endurance` },
 ];
 
 // A row with a `route` has a working form; the rest ("Coming soon") don't

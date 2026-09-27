@@ -80,6 +80,16 @@ export function SessionPage() {
   const [acMainsDipsReadings, setAcMainsDipsReadings] = useState(undefined);
   const [electricalBurstsReadings, setElectricalBurstsReadings] = useState(undefined);
   const [electrostaticDischargesReadings, setElectrostaticDischargesReadings] = useState(undefined);
+  // Damp heat/Endurance (feat/damp-heat-endurance) — multi-run tests, so
+  // their progress needs the run list first (from the same idempotent
+  // POST .../setup the test pages themselves call) before per-run
+  // readings can be fetched and summed; see the second effect below.
+  const [dampHeatRuns, setDampHeatRuns] = useState(undefined);
+  const [dampHeatReadingCount, setDampHeatReadingCount] = useState(undefined);
+  const [dampHeatAllPassed, setDampHeatAllPassed] = useState(undefined);
+  const [enduranceRuns, setEnduranceRuns] = useState(undefined);
+  const [enduranceReadingCount, setEnduranceReadingCount] = useState(undefined);
+  const [enduranceAllPassed, setEnduranceAllPassed] = useState(undefined);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -108,6 +118,12 @@ export function SessionPage() {
           apiFetch(`/sessions/${id}/ac-mains-dips/readings`),
           apiFetch(`/sessions/${id}/electrical-bursts/readings`),
           apiFetch(`/sessions/${id}/electrostatic-discharges/readings`),
+          // Idempotent (a no-op once the fixed runs already exist) — the
+          // same setup call the test pages themselves make; here it's
+          // just how the overview learns which run ids to sum readings
+          // across, below.
+          apiFetch(`/sessions/${id}/damp-heat/setup`, { method: "POST" }),
+          apiFetch(`/sessions/${id}/endurance/setup`, { method: "POST" }),
         ]);
       })
       .then((results) => {
@@ -129,6 +145,8 @@ export function SessionPage() {
           acMainsDipsReadingsData,
           electricalBurstsReadingsData,
           electrostaticDischargesReadingsData,
+          dampHeatRunsData,
+          enduranceRunsData,
         ] = results;
         setInstrument(instrumentData);
         setWeighingSequence(sequenceData);
@@ -146,6 +164,8 @@ export function SessionPage() {
         setAcMainsDipsReadings(acMainsDipsReadingsData);
         setElectricalBurstsReadings(electricalBurstsReadingsData);
         setElectrostaticDischargesReadings(electrostaticDischargesReadingsData);
+        setDampHeatRuns(dampHeatRunsData);
+        setEnduranceRuns(enduranceRunsData);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -158,6 +178,59 @@ export function SessionPage() {
       cancelled = true;
     };
   }, [id, reloadKey]);
+
+  // Damp heat/Endurance readings, summed across their (fixed) multiple
+  // runs — a second stage because it depends on the run ids the setup
+  // calls above just resolved. Fetched once per run, in parallel; each
+  // test's own total is `weighingSequence.length * 2 directions * its own
+  // run count` — the SAME load sequence Weighing itself uses (both tests
+  // reuse it verbatim, docs/architecture.md), so no separate sequence
+  // fetch is needed here.
+  useEffect(() => {
+    if (!dampHeatRuns || dampHeatRuns.length === 0) return undefined;
+    let cancelled = false;
+    Promise.all(
+      dampHeatRuns.map((run) => apiFetch(`/sessions/${id}/damp-heat/readings?run_id=${encodeURIComponent(run.id)}`)),
+    )
+      .then((perRunReadings) => {
+        if (cancelled) return;
+        const all = perRunReadings.flat();
+        setDampHeatReadingCount(all.length);
+        setDampHeatAllPassed(all.length > 0 && all.every((r) => r.passed));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDampHeatReadingCount(0);
+          setDampHeatAllPassed(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, dampHeatRuns]);
+
+  useEffect(() => {
+    if (!enduranceRuns || enduranceRuns.length === 0) return undefined;
+    let cancelled = false;
+    Promise.all(
+      enduranceRuns.map((run) => apiFetch(`/sessions/${id}/endurance/readings?run_id=${encodeURIComponent(run.id)}`)),
+    )
+      .then((perRunReadings) => {
+        if (cancelled) return;
+        const all = perRunReadings.flat();
+        setEnduranceReadingCount(all.length);
+        setEnduranceAllPassed(all.length > 0 && all.every((r) => r.passed));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEnduranceReadingCount(0);
+          setEnduranceAllPassed(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, enduranceRuns]);
 
   const weighingProgress = useMemo(() => {
     const total = weighingSequence ? weighingSequence.length * 2 : undefined; // every load, both directions
@@ -226,6 +299,19 @@ export function SessionPage() {
     );
   }, [electrostaticDischargesReadings]);
 
+  // Damp heat (3 runs) / Endurance (2 runs) — both reuse the exact same
+  // Weighing load sequence (feat/damp-heat-endurance), so `total` is that
+  // sequence's own length x2 directions x however many runs this test has.
+  const dampHeatProgress = useMemo(() => {
+    const total = weighingSequence && dampHeatRuns ? weighingSequence.length * 2 * dampHeatRuns.length : undefined;
+    return computeProgress(total, dampHeatReadingCount ?? 0, dampHeatAllPassed);
+  }, [weighingSequence, dampHeatRuns, dampHeatReadingCount, dampHeatAllPassed]);
+
+  const enduranceProgress = useMemo(() => {
+    const total = weighingSequence && enduranceRuns ? weighingSequence.length * 2 * enduranceRuns.length : undefined;
+    return computeProgress(total, enduranceReadingCount ?? 0, enduranceAllPassed);
+  }, [weighingSequence, enduranceRuns, enduranceReadingCount, enduranceAllPassed]);
+
   const PROGRESS_BY_KEY = {
     weighing: weighingProgress,
     zero_tare: zeroTareProgress,
@@ -238,6 +324,8 @@ export function SessionPage() {
     ac_mains_dips: acMainsDipsProgress,
     electrical_bursts: electricalBurstsProgress,
     electrostatic_discharges: electrostaticDischargesProgress,
+    damp_heat: dampHeatProgress,
+    endurance: enduranceProgress,
   };
 
   // Submit-for-review is only meaningfully offered once at least one test
