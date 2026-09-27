@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
 import { FocusedPageHeader } from "@/components/AppShell";
@@ -13,8 +14,10 @@ import { Button } from "@/components/ui/button";
  * "Start"/"Open" button, never straight from an instrument (CLAUDE.md-level
  * navigation rule for this task: verification_type is chosen once, at
  * session creation, not here). Fetches the session, instrument, generated
- * load sequence, and every already-submitted reading in parallel, so a
- * refresh reconstructs the form instead of losing progress.
+ * load sequence, and the session's Weighing runs (feat/test-runs-conditions)
+ * in parallel; readings and cross-run comparison are fetched separately,
+ * keyed by the currently selected run, so a refresh reconstructs the form
+ * instead of losing progress.
  */
 export function WeighingSessionPage() {
   const { id } = useParams();
@@ -24,9 +27,16 @@ export function WeighingSessionPage() {
   const [session, setSession] = useState(undefined);
   const [instrument, setInstrument] = useState(undefined);
   const [sequence, setSequence] = useState(undefined);
-  const [readingRecords, setReadingRecords] = useState(undefined);
+  const [runs, setRuns] = useState(undefined);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Runs/conditions (feat/test-runs-conditions). `null` is the implicit
+  // default/only run — the exact behavior every session had before runs
+  // existed — never a real `test_runs` row itself.
+  const [selectedRunId, setSelectedRunId] = useState(null);
+  const [readingRecords, setReadingRecords] = useState(undefined);
+  const [comparison, setComparison] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,15 +49,15 @@ export function WeighingSessionPage() {
         return Promise.all([
           apiFetch(`/instruments/${sessionData.instrument_id}`),
           apiFetch(`/sessions/${id}/weighing/sequence`),
-          apiFetch(`/sessions/${id}/weighing/readings`),
+          apiFetch(`/sessions/${id}/weighing/runs`),
         ]);
       })
       .then((results) => {
         if (cancelled || !results) return;
-        const [instrumentData, sequenceData, readingsData] = results;
+        const [instrumentData, sequenceData, runsData] = results;
         setInstrument(instrumentData);
         setSequence(sequenceData);
-        setReadingRecords(readingsData);
+        setRuns(runsData);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -60,6 +70,62 @@ export function WeighingSessionPage() {
       cancelled = true;
     };
   }, [id, reloadKey]);
+
+  // Each run has its own independent set of readings — refetched whenever
+  // the selected run changes. `selectedRunId === null` (the default case,
+  // and the only case for every session that never grows a second run)
+  // omits `run_id` entirely, the exact pre-existing query.
+  useEffect(() => {
+    if (session == null) return undefined;
+    let cancelled = false;
+    setReadingRecords(undefined);
+    const query = selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : "";
+    apiFetch(`/sessions/${id}/weighing/readings${query}`)
+      .then((data) => {
+        if (!cancelled) setReadingRecords(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast.error(`Couldn't load this run's readings: ${err.message}`);
+          setReadingRecords([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, session, selectedRunId, reloadKey]);
+
+  // Cross-run comparison (feat/test-runs-conditions): the currently
+  // selected run against the default/Initial run. Nothing to compare when
+  // viewing the default run itself (selectedRunId === null) — that's the
+  // baseline, not a second run.
+  useEffect(() => {
+    if (session == null || selectedRunId === null) {
+      setComparison(null);
+      return undefined;
+    }
+    let cancelled = false;
+    apiFetch(`/sessions/${id}/weighing/runs/compare?run_id_b=${encodeURIComponent(selectedRunId)}`)
+      .then((data) => {
+        if (!cancelled) setComparison(data);
+      })
+      .catch((err) => {
+        if (!cancelled) toast.error(`Couldn't load the run comparison: ${err.message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, session, selectedRunId, reloadKey]);
+
+  async function handleCreateRun(runLabel, conditions) {
+    const newRun = await apiFetch(`/sessions/${id}/weighing/runs`, {
+      method: "POST",
+      body: { run_label: runLabel, conditions },
+    });
+    setRuns((prev) => [...(prev ?? []), newRun]);
+    setSelectedRunId(newRun.id);
+    return newRun;
+  }
 
   if (session === undefined) {
     return (
@@ -89,7 +155,7 @@ export function WeighingSessionPage() {
     );
   }
 
-  const loadingTable = sequence === undefined || readingRecords === undefined;
+  const loadingTable = sequence === undefined || runs === undefined || readingRecords === undefined;
 
   return (
     // `lg:flex lg:h-full lg:min-h-0 lg:flex-col` — matches FocusedShell's
@@ -118,7 +184,13 @@ export function WeighingSessionPage() {
         </Card>
       ) : (
         <div className="lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+          {/* Keyed by the selected run: switching runs remounts the table
+              (and useWeighingReadings' cell state) from that run's own
+              freshly-fetched readingRecords, rather than trying to
+              in-place resync a hook whose whole design assumes it seeds
+              its state once, from whatever readings it was handed. */}
           <WeighingFormTable
+            key={selectedRunId ?? "default"}
             sessionId={id}
             sessionStatus={session.status}
             instrument={instrument}
@@ -127,6 +199,12 @@ export function WeighingSessionPage() {
             observerDefault={authSession?.user?.email}
             initialReadings={readingRecords}
             actorId={authSession?.user?.id}
+            runId={selectedRunId}
+            runs={runs}
+            selectedRunId={selectedRunId}
+            onSelectRun={setSelectedRunId}
+            onCreateRun={handleCreateRun}
+            comparison={comparison}
           />
         </div>
       )}

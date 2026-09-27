@@ -19,6 +19,7 @@ def insert_reading(
     direction: Optional[str] = None,
     series_no: Optional[int] = None,
     position_no: Optional[int] = None,
+    run_id: Optional[str] = None,
     data: dict,
 ) -> dict:
     """`test_type` is required (no default) so every call site says
@@ -30,7 +31,10 @@ def insert_reading(
     Weighing-sequence reading, always null for a zero/tare one — see
     app/contracts/zero_tare.py). `series_no`/`position_no` are Repeatability's
     and Eccentricity's own columns respectively; every other test type
-    leaves them null.
+    leaves them null. `run_id` (feat/test-runs-conditions) is null unless
+    the caller is submitting against an explicitly created run — the
+    default/only run of any test is null, exactly as before this column
+    existed.
     """
     return run_insert(
         client.table(READINGS_TABLE).insert(
@@ -41,6 +45,7 @@ def insert_reading(
                 "direction": direction,
                 "series_no": series_no,
                 "position_no": position_no,
+                "run_id": run_id,
                 "data": data,
                 "entered_by": entered_by,
             }
@@ -91,13 +96,23 @@ def delete_reading(client: Client, reading_id: str) -> None:
     client.table(READINGS_TABLE).delete().eq("id", reading_id).execute()
 
 
-def insert_result(client: Client, *, session_id: str, test_type: str, reading_id: str, result: dict, passed: bool) -> dict:
+def insert_result(
+    client: Client,
+    *,
+    session_id: str,
+    test_type: str,
+    reading_id: str,
+    result: dict,
+    passed: bool,
+    run_id: Optional[str] = None,
+) -> dict:
     return run_insert(
         client.table(RESULTS_TABLE).insert(
             {
                 "session_id": session_id,
                 "test_type": test_type,
                 "reading_id": reading_id,
+                "run_id": run_id,
                 "result": result,
                 "passed": passed,
             }

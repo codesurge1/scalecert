@@ -36,8 +36,16 @@ const EMPTY_CELL = { indication: "", deltaL: "0", result: null, submitting: fals
  * both just read/write the same `cells` map via `getCell`/`updateCell`.
  *
  * `cells[sequence_no][apiDirection] = { indication, deltaL, result, submitting, error }`
+ *
+ * `runId` (feat/test-runs-conditions) scopes every submission to a run —
+ * `null`/omitted means the implicit default/only run, the exact behavior
+ * from before runs existed. The caller (`WeighingFormTable`, mounted with
+ * `key={runId}` by `WeighingSessionPage`) is responsible for handing this
+ * hook a fresh instance per run; this hook itself has no run-switching
+ * logic, by design — it only ever seeds `cells` once, from whichever
+ * run's `initialReadings` it was constructed with.
  */
-export function useWeighingReadings({ sessionId, sessionStatus, initialReadings, e0, actorId }) {
+export function useWeighingReadings({ sessionId, sessionStatus, initialReadings, e0, actorId, runId = null }) {
   const disabled = sessionStatus !== "draft";
 
   // Lazily seeded from initialReadings once, on mount — this page is keyed
@@ -112,6 +120,7 @@ export function useWeighingReadings({ sessionId, sessionStatus, initialReadings,
       I: cell.indication,
       delta_l: cell.deltaL === "" ? "0" : cell.deltaL,
       E0: e0,
+      run_id: runId,
     };
     try {
       const res = await apiFetch(`/sessions/${sessionId}/weighing/readings`, { method: "POST", body: payload });
