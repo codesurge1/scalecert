@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
-import { PageHeader } from "@/components/AppShell";
+import { FocusedBackLink, PageHeader } from "@/components/AppShell";
 import { EccentricityFormTable } from "@/components/eccentricity/EccentricityFormTable";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,9 +90,7 @@ export function EccentricitySessionPage() {
 
   return (
     <div className="grid gap-4">
-      <Link to={`/sessions/${id}`} className="text-sm text-muted-foreground hover:text-foreground hover:underline">
-        &larr; Session overview
-      </Link>
+      <FocusedBackLink sessionId={id} />
       <PageHeader title="Eccentricity" />
 
       {session.status !== "draft" ? (
@@ -109,6 +107,7 @@ export function EccentricitySessionPage() {
           sessionStatus={session.status}
           instrument={instrument}
           setup={setup}
+          verificationType={session.verification_type}
           observerDefault={authSession?.user?.email}
           initialReadings={readingRecords}
         />

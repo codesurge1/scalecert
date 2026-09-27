@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
+import { CollapsibleFormHeader } from "@/components/oiml/CollapsibleFormHeader";
 import { roundForDisplay, roundLoadForDisplay } from "@/lib/displayFormat";
 
 const ZERO_DEVICE_OPTIONS = [
@@ -38,7 +39,15 @@ function cellsFromInitialReadings(initialReadings) {
  * Same OIML bordered-document-sheet look as the other two forms in this
  * task, reusing the shared FormPrimitives.
  */
-export function ZeroTareFormTable({ sessionId, sessionStatus, instrument, checks, observerDefault, initialReadings }) {
+export function ZeroTareFormTable({
+  sessionId,
+  sessionStatus,
+  instrument,
+  checks,
+  verificationType,
+  observerDefault,
+  initialReadings,
+}) {
   const disabled = sessionStatus !== "draft";
 
   const [observer, setObserver] = useState(observerDefault ?? "");
@@ -98,60 +107,64 @@ export function ZeroTareFormTable({ sessionId, sessionStatus, instrument, checks
 
   return (
     <div className="grid gap-3">
-      <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
-        <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
-          <span>OIML R 76-2: 2007 (E)</span>
-          <span>Report page &hellip;./&hellip;.</span>
-        </div>
+      <CollapsibleFormHeader instrument={instrument} verificationType={verificationType} observer={observer}>
+        <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+          <div className="mb-4 flex items-baseline justify-between border-b border-neutral-900 pb-1 text-xs">
+            <span>OIML R 76-2: 2007 (E)</span>
+            <span>Report page &hellip;./&hellip;.</span>
+          </div>
 
-        <h2 className="text-sm font-bold">1&nbsp;&nbsp;&nbsp;WEIGHING PERFORMANCE (A.4.4)</h2>
-        <p className="ml-8 text-sm">(Zero/tare device accuracy)</p>
+          <h2 className="text-sm font-bold">1&nbsp;&nbsp;&nbsp;WEIGHING PERFORMANCE (A.4.4)</h2>
+          <p className="ml-8 text-sm">(Zero/tare device accuracy)</p>
 
-        <div className="mt-5 grid gap-1.5 text-sm">
-          <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
-          <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
-          <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
-          <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
-          <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
-        </div>
+          <div className="mt-5 grid gap-1.5 text-sm">
+            <FormLine label="Application no.:" value={fmt(instrument?.application_no)} />
+            <FormLine label="Type designation:" value={fmt(instrument?.type_designation)} />
+            <FormLine label="Observer:" value={observer} editable disabled={disabled} onChange={setObserver} />
+            <FormLine label="Verification scale interval, e:" value={fmt(instrument?.e_value)} />
+            <FormLine label="Resolution during test (smaller than e):" value={fmt(resolutionDuringTest)} />
+          </div>
 
-        <div className="mt-5">
-          <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
-          <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
-            {ZERO_DEVICE_OPTIONS.map((opt) => (
-              <FormCheckbox
-                key={opt.value}
-                label={opt.label}
-                checked={zeroDeviceStatus === opt.value}
-                onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+          <div className="mt-5">
+            <p className="text-sm">Automatic zero-setting and zero-tracking device is:</p>
+            <div className="mt-1.5 flex flex-wrap gap-x-8 gap-y-2">
+              {ZERO_DEVICE_OPTIONS.map((opt) => (
+                <FormCheckbox
+                  key={opt.value}
+                  label={opt.label}
+                  checked={zeroDeviceStatus === opt.value}
+                  onClick={() => !disabled && setZeroDeviceStatus(opt.value)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-5 text-sm">
+            <p>
+              <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>, &nbsp; <i>E</i>
+              <sub>c</sub> = <i>E</i> − <i>E</i>
+              <sub>0</sub>
+            </p>
+            <div className="mt-1 flex items-baseline gap-2 text-xs text-neutral-700">
+              <span>
+                <i>E</i>
+                <sub>0</sub> =
+              </span>
+              <input
+                className="w-24 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-center focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
+                inputMode="decimal"
+                disabled={disabled}
+                value={e0}
+                onChange={(event) => setE0(event.target.value)}
               />
-            ))}
+              <span>g</span>
+            </div>
           </div>
         </div>
+      </CollapsibleFormHeader>
 
-        <div className="mt-5 text-sm">
-          <p>
-            <i>E</i> = <i>I</i> + ½ <i>e</i> − Δ<i>L</i> − <i>L</i>, &nbsp; <i>E</i>
-            <sub>c</sub> = <i>E</i> − <i>E</i>
-            <sub>0</sub>
-          </p>
-          <div className="mt-1 flex items-baseline gap-2 text-xs text-neutral-700">
-            <span>
-              <i>E</i>
-              <sub>0</sub> =
-            </span>
-            <input
-              className="w-24 border-0 border-b border-dotted border-neutral-500 bg-transparent px-1 text-center focus:outline-none focus:border-solid focus:border-neutral-900 disabled:opacity-60"
-              inputMode="decimal"
-              disabled={disabled}
-              value={e0}
-              onChange={(event) => setE0(event.target.value)}
-            />
-            <span>g</span>
-          </div>
-        </div>
-
-        <div className="mt-4 overflow-x-auto">
+      <div className="mx-auto w-full max-w-3xl border-2 border-neutral-900 bg-white p-6 font-serif text-neutral-900 sm:p-8">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[520px] border-collapse text-xs">
             <thead>
               <tr>

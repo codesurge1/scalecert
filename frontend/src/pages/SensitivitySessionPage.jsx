@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { apiFetch } from "@/lib/api";
 import { useSession as useAuthSession } from "@/lib/supabase";
-import { PageHeader } from "@/components/AppShell";
+import { FocusedBackLink, PageHeader } from "@/components/AppShell";
 import { SensitivityFormTable } from "@/components/sensitivity/SensitivityFormTable";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -85,9 +85,7 @@ export function SensitivitySessionPage() {
 
   return (
     <div className="grid gap-4">
-      <Link to={`/sessions/${id}`} className="text-sm text-muted-foreground hover:text-foreground hover:underline">
-        &larr; Session overview
-      </Link>
+      <FocusedBackLink sessionId={id} />
       <PageHeader title="Sensitivity" />
 
       {session.status !== "draft" ? (
@@ -104,6 +102,7 @@ export function SensitivitySessionPage() {
           sessionStatus={session.status}
           instrument={instrument}
           checks={checks}
+          verificationType={session.verification_type}
           observerDefault={authSession?.user?.email}
           initialReadings={readingRecords}
         />
