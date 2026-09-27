@@ -37,6 +37,7 @@ class LoadKind(str, Enum):
     MAX = "max"
     MIN = "min"
     BAND_TRANSITION = "band_transition"
+    TEN_E = "ten_e"
     FILL = "fill"
 
 
@@ -52,8 +53,10 @@ class LoadEntry:
 
     @property
     def is_anchor(self) -> bool:
-        """True for a sourced anchor (max/min/band_transition); False for a
-        placeholder fill point — see engine/load_sequence.py."""
+        """True for a mandatory anchor — an OIML-sourced one (max/min/
+        band_transition) or the RRSL "10e start" lab-convention anchor
+        (ten_e, see engine/load_sequence.py) — False only for a placeholder
+        fill point interior to Band 1."""
         return self.kind is not LoadKind.FILL
 
 
