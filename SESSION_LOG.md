@@ -515,3 +515,31 @@ Updated `docs/architecture.md`'s one-domain-routing section (API surface) to des
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — fix: scope SPA fallback to the frontend service
+
+**Done.** Two prior SPA-fallback attempts and one production outage, both now fully documented in `docs/errors/ERROR_LOG.md`: attempt 1 (root catch-all `{"service": "frontend", "path": "/index.html"}`) shipped but deep links still 404'd; attempt 2 (root catch-all plain string `"/index.html"`) took the ENTIRE site down (including `/`) because there's no `index.html` at the project root in this multi-service layout, and was reverted via `git revert -m 1` (no history rewrite, no force-push). Root `vercel.json` is back to attempt 1's form and this task leaves it exactly as-is.
+
+This task's fix: a new `frontend/vercel.json` (`{"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]}`), scoped to the frontend service's own root where `index.html` genuinely exists after the build.
+
+**Mechanism NOT confirmed from a primary source** — `vercel.com`/`openapi.vercel.sh` still egress-blocked, tried again. Vercel's own `vite-fastapi` reference example (fetched via GitHub raw + README) uses neither a per-service file nor a `path` override, and its demo has no client routes, so it's not a valid precedent either way. Web search turned up two independent real projects that hit and fixed this exact bug — MACantara/Phalanx-Cyber-Academy#465 (merged) and VictorBravo9er/Teacher-Assistant-Workspace#18/#19 — both converged on a DIFFERENT mechanism: nesting `rewrites` directly inside `services.frontend` in the ROOT config, not a separate file. One of those repos' `frontend/vercel.json` was for a standalone (non-services) deploy of that folder, not confirmation of the services-model mechanism this task bets on.
+
+**The one alternative if this fails** (documented in full in ERROR_LOG, since it requires touching the root config, out of this task's scope): delete `frontend/vercel.json`, instead add `"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]` as a property nested inside `services.frontend` in the root `vercel.json` — the mechanism both real-world precedents actually used.
+
+**Also flagged, not acted on:** the root catch-all's `path: "/index.html"` override looks likely inert for this purpose (didn't produce fallback in attempt 1's real deploy, yet real assets kept loading) — recommend dropping it once a working fallback is confirmed, in a follow-up task. Not changed here per the task's explicit "leave root as-is" instruction.
+
+`npm run build` and full pytest suite both unaffected (see branch reply for real output — config/docs-only change, no app code touched).
+
+**Next:** The deploy is the only real verdict. Check order: `/` loads first (would have caught attempt 2's outage immediately — cheapest smoke test, now the standing first check for any SPA-routing change), then `/api/health` returns JSON, then `/instruments` loads styled (real JS/CSS, not bare HTML), then `/verify/<cert>`.
+
+**Open questions:**
+- Whether `frontend/vercel.json` is actually read by Vercel under the `services` config model at all — unconfirmed; the documented alternative (nested `services.frontend.rewrites` in the root config) is more strongly evidenced by two independent real-world fixes and should be tried next if this deploy fails.
+- Whether the root catch-all's `path` override is truly inert or doing something not yet understood — flagged, not resolved; recommend dropping it once fallback is confirmed working.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
