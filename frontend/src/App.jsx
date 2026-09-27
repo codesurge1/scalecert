@@ -14,6 +14,9 @@ import { EccentricitySessionPage } from "@/pages/EccentricitySessionPage";
 import { DiscriminationSessionPage } from "@/pages/DiscriminationSessionPage";
 import { SensitivitySessionPage } from "@/pages/SensitivitySessionPage";
 import { TiltingSessionPage } from "@/pages/TiltingSessionPage";
+import { SessionsListPage } from "@/pages/SessionsListPage";
+import { DiscrepancyReportsPage } from "@/pages/DiscrepancyReportsPage";
+import { AuditTrailPage } from "@/pages/AuditTrailPage";
 import { VerifyPage } from "@/pages/VerifyPage";
 
 export default function App() {
@@ -31,6 +34,14 @@ export default function App() {
           <Route path="/instruments" element={<InstrumentsListPage />} />
           <Route path="/instruments/new" element={<InstrumentRegisterPage />} />
           <Route path="/instruments/:id" element={<InstrumentDetailPage />} />
+          {/* One page behind both "My sessions" (technician) and
+              "Sessions (all)" (approver/admin) — see SessionsListPage.jsx.
+              Placed before /sessions/:id; react-router ranks static
+              segments above dynamic ones regardless of order, but this
+              keeps the list-then-detail reading order explicit. */}
+          <Route path="/sessions" element={<SessionsListPage />} />
+          <Route path="/discrepancy-reports" element={<DiscrepancyReportsPage />} />
+          <Route path="/audit-trail" element={<AuditTrailPage />} />
           <Route path="/sessions/:id" element={<SessionPage />} />
           <Route path="/sessions/:id/weighing" element={<WeighingSessionPage />} />
           <Route path="/sessions/:id/zero-tare" element={<ZeroTareSessionPage />} />
