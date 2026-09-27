@@ -564,3 +564,32 @@ Still not confirmed from Vercel's own primary docs (egress-blocked). This is the
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — feat: role-driven sidebar and dashboard
+
+**Done.** Replaced the top-bar nav with a persistent left sidebar (`AppShell.jsx`) whose items are filtered by role, not disabled — a technician's sidebar has no DOM node for approver-only items at all (`src/lib/navigation.js`, `navItemsForRole`). Responsive: `md`+ keeps the sidebar always visible; below that it's a hamburger-triggered drawer over a backdrop. Bottom of the sidebar is pinned: email, role badge, Log out.
+
+Built a real role-aware dashboard (`DashboardPage.jsx`) to replace the old "getting started" placeholder: technician sees quick actions (Register instrument; Start verification, which links to `/instruments` since a session needs an instrument picked first), three counts, and a "Needs your attention" list of their own draft/returned sessions (returned ones first, with the return reason inline). Approver/admin sees two separated sections — "Awaiting your approval" and "Your own sessions" (captioned with the separation-of-duties rule in plain text, not left mysterious) — plus counts. Empty states are a real dashed-card sentence, not blank space.
+
+**Endpoint gap, worked around, not fixed:** there's no role-scoped `GET /api/sessions`. Built `useAllSessions.js`, which composes it from `GET /api/instruments` + `GET /api/instruments/{id}/sessions` per instrument — correct today because RLS already scopes each per-instrument call right for the caller's role, but `O(instruments)` requests. Flagged in architecture.md as the clean fix for a later backend task.
+
+**Two placeholder pages, not omitted sidebar items:** `DiscrepancyReportsPage.jsx`/`AuditTrailPage.jsx` — chosen over hiding "Discrepancy reports"/"Audit trail" entirely, since omitting them would misrepresent the approver/admin role model. Both say plainly why there's nothing to show: neither `discrepancy_reports` nor `audit_log` has a read endpoint yet (only a public INSERT exists for the former; the latter is write-only from every lifecycle transition). "Users & roles" was omitted outright (not even a placeholder) — no such page exists and it isn't part of this task's role model description either.
+
+One page, `SessionsListPage.jsx` (route `/sessions`), serves both "My sessions" (technician) and "Sessions (all)" (approver/admin) — same `useAllSessions()` data, already RLS-scoped correctly per role; only the title and an extra "Created by" column differ.
+
+`npm run build` succeeds (`2058 modules transformed`, `✓ built in 987ms`); `npm run lint` shows only pre-existing warning patterns already present across every other data-fetching hook/page (no new warning categories introduced). Full pytest suite unaffected — frontend-only task, 596 passed.
+
+**Next:** Verify on the actual preview deploy as both a technician and an approver/admin account — sidebar contents differ correctly, dashboard sections match role, `/sessions`, `/discrepancy-reports`, `/audit-trail` all load, and every pre-existing route (instrument/session/test pages, public `/verify/:cert`) still works inside (or, for `/verify`, outside) the new shell.
+
+**Open questions:**
+- `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task.
+- Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do.
+- Whether this nested-rewrite mechanism actually works under Vercel's `services` model — best real-world evidence available, still unconfirmed from primary docs; if it also fails, escalate rather than guess a fifth shape.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
