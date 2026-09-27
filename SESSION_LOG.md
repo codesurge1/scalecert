@@ -492,3 +492,26 @@ Also added: `run_update` (`app/repositories/errors.py`, symmetric to `run_insert
 - Whether the ~17–18 item battery is full type evaluation (assumed yes).
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided).
 - Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
+
+---
+
+### [2026-09-27] — fix: SPA fallback so deep links and QR verify URLs resolve
+
+**Done.** Fixed a real production bug: loading any URL directly (not navigating client-side) — `/instruments`, `/sessions/<id>`, and critically `/verify/{certificate_number}` (the exact URL every certificate's QR code encodes) — 404'd from the server. `vercel.json`'s catch-all rewrite forwarded the exact requested path to the frontend service with no fallback (`{"service": "frontend"}`), so it only ever served a real static file (`/`, `/assets/*`, `favicon.svg`); anything else 404'd before React Router ever got a chance to route it client-side. `docs/architecture.md` had actually documented this as "SPA fallback" already in place — it wasn't; that line was wrong.
+
+`vercel.com`/`openapi.vercel.sh` were both still egress-blocked (tried both directly, tried again per this task's instruction). Reasoned from search-engine-summarized third-party/community sources instead (multiple independent, mutually consistent hits): CONFIRMED — a rewrite's `destination` object supports an optional `path` key alongside `service` (`{service, path?}`), specifically for this "route to a service but override the path it receives" case; CONFIRMED — the universally-documented single-project SPA-fallback idiom is exactly this shape minus the service wrapper (`{"source": "/(.*)", "destination": "/index.html"}`), and real static assets are NOT swallowed by it because a real file match takes precedence over a rewrite's destination — this is long-standing, widely-corroborated Vercel routing behavior. INFERRED, not found stated verbatim in a primary source: that this exact "real file wins, rewrite is a fallback" precedence carries over unchanged to the newer multi-service `{service, path}` destination shape specifically. This inference is the one thing only a real deploy proves — flagged explicitly in the branch reply, with the verification steps designed to catch it failing (checking that the actual JS/CSS loaded, not just that some HTML came back, is the specific check that would catch this inference being wrong).
+
+**The fix:** one line. `{"source": "/(.*)", "destination": {"service": "frontend"}}` → `{"source": "/(.*)", "destination": {"service": "frontend", "path": "/index.html"}}`. `/api/:path*`'s own, separate, earlier rule is completely untouched. No app code, engine, backend route, or schema touched — pure routing config, exactly the task's scope.
+
+Updated `docs/architecture.md`'s one-domain-routing section (API surface) to describe the `path` override precisely and correct the previously-wrong "SPA fallback" claim about the old rule. Added the first real entry to `docs/errors/ERROR_LOG.md` (symptom → root cause → fix → prevention) — this is exactly the class of bug that log exists for: real debugging, blocked primary docs, a wrong existing doc claim to catch. `npm run build` succeeds (unaffected — no app code changed). Full pytest suite: unaffected by a JSON routing-config change, re-run anyway to confirm (see branch reply for real output).
+
+**Next:** The real verdict is the next deploy — this cannot be confirmed from this sandbox (no live Vercel deploy access). Verification checklist is in the branch reply: load `/instruments`, `/sessions/<id>`, `/verify/<cert>` directly in a fresh tab (not via in-app navigation) and confirm each renders the app (not a 404) with its real JS/CSS loaded (not just bare HTML — the one thing that would silently fail if the "real file wins over rewrite" inference above turns out wrong for the services shape specifically); confirm `/api/health` still returns JSON, unaffected.
+
+**Open questions:**
+- Whether Vercel's `{service, path}` destination override truly preserves "real static file wins over the rewrite" precedence identically to the classic single-project `/index.html` idiom — inferred, not confirmed from a primary source; the next real deploy is the actual test.
+- No existence/issued validation on a discrepancy report's `certificate_number` — deliberate (avoids a leak), but means a report can reference a nonexistent or typo'd number with no feedback to the reporter.
+- Whether "who approved" should ever be resolved to a human name (still shown as a shortened UUID) remains open from a previous task, unchanged here.
+- Band-1 intermediate load spacing and the 10e start-load convention are still documented placeholders pending RRSL confirmation, unchanged by this task.
+- Whether the ~17–18 item battery is full type evaluation (assumed yes).
+- Admin role-promotion UI vs. seed-script-only (see ADR when decided).
+- Multi-interval classification/page-6 sub-ranges — known future extensions, unchanged by this task.
