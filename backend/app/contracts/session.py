@@ -65,6 +65,18 @@ class SessionOut(BaseModel):
     approved_at: Optional[str] = None
     issued_at: Optional[str] = None
     certificate_number: Optional[str] = None
+    # Set once a certificate PDF has actually been generated and uploaded —
+    # `null` until then, including for an issued session where generation
+    # failed or hasn't happened yet (fix/certificate-generation-wiring: the
+    # download affordance never gates on this being set, it's informational
+    # only — see SessionLifecyclePanel.jsx).
+    report_storage_path: Optional[str] = None
+    # NOT a `test_sessions` column, NEVER persisted — set only by
+    # `issue_session`'s own response (app/routers/sessions.py) when its
+    # best-effort certificate generation fails, so the caller sees it ONCE,
+    # on the response to the action that triggered it; absent (None) on
+    # every other read of this session, including a moment later.
+    report_generation_error: Optional[str] = None
     # NOT a `test_sessions` column — derived from the latest `action='returned'`
     # audit_log row for this session (see
     # app.repositories.sessions.get_latest_return_reason); populated by the
@@ -98,6 +110,7 @@ def session_out_from_rows(
         approved_at=session_row.get("approved_at"),
         issued_at=session_row.get("issued_at"),
         certificate_number=session_row.get("certificate_number"),
+        report_storage_path=session_row.get("report_storage_path"),
         return_reason=return_reason,
         test_selections=[SessionTestSelectionOut(**row) for row in selection_rows],
     )

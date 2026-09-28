@@ -147,7 +147,16 @@ export function SessionLifecyclePanel({ session, profile, canSubmit, submitBlock
     setBusy(true);
     try {
       const updated = await apiFetch(`/sessions/${session.id}${path}`, { method: "POST" });
-      toast.success(successMessage);
+      // Only ever set on the response to POST .../issue (app/routers/
+      // sessions.py) — the issue itself (status + certificate number)
+      // still succeeded, but automatic PDF generation didn't; surface that
+      // clearly instead of a plain "Certificate issued." that would hide
+      // it. "Download certificate" below is the retry — never a dead end.
+      if (updated?.report_generation_error) {
+        toast.error(updated.report_generation_error);
+      } else {
+        toast.success(successMessage);
+      }
       onChanged(updated);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Something went wrong.";

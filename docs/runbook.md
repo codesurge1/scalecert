@@ -14,7 +14,7 @@ Keys from `.env.example`:
 - `SUPABASE_SERVICE_ROLE_KEY` — backend only; never for user-scoped queries.
 - `DATABASE_URL` — POOLED connection string (Supavisor, transaction mode), not the direct connection.
 - `SUPABASE_STORAGE_BUCKET=reports` — Storage bucket for generated PDF certificates/reports.
-- `PUBLIC_APP_BASE_URL` — optional; overrides the base URL a certificate's QR code points at. Leave blank to derive it from the incoming request's own Host (correct by default — frontend and backend share one domain, docs/architecture.md).
+- `PUBLIC_APP_BASE_URL` — **required** (`fix/certificate-generation-wiring`) — the public base URL a certificate's QR code encodes. Certificate generation (at issue time, and on-demand via "Download certificate") fails loudly with a clear error if this is unset, rather than silently falling back to the backend's own `request.base_url` — behind the two-service Vercel rewrite below, that fallback is not reliably the public-facing domain the browser actually used, and a silently wrong URL baked into an issued certificate's QR code is worse than refusing to generate one. Set it to this deployment's real public URL (e.g. `https://scalecert.example.com`), no trailing slash. Local dev: `http://localhost:8000` (or wherever the backend is actually reachable) — leaving it blank only breaks certificate generation specifically, nothing else.
 
 ## Local setup
 
@@ -24,7 +24,20 @@ Backend (`cd backend && pip install -r requirements.txt && uvicorn app.main:app 
 
 To set up a fresh project:
 1. Run `db/schema.sql` in the Supabase SQL editor.
-2. Create the `reports` Storage bucket.
+2. Create the `reports` Storage bucket — **private** (do not enable "Public bucket": nothing in this app relies on a public bucket URL, every download goes through the authenticated `POST /sessions/{id}/report` endpoint, and a public bucket would let anyone who knows or guesses a certificate's storage path read it directly, bypassing that endpoint's own authorization entirely). Storage bucket policies live in Supabase's own `storage` schema, not in `db/schema.sql` (this app's own `public` schema) — apply the following by hand, in the SQL editor, after creating the bucket (`fix/certificate-generation-wiring`; this policy has never been verified as applied on a real project before this task):
+   ```sql
+   create policy "reports bucket: authenticated upload"
+   on storage.objects for insert
+   to authenticated
+   with check (bucket_id = 'reports');
+
+   create policy "reports bucket: authenticated overwrite"
+   on storage.objects for update
+   to authenticated
+   using (bucket_id = 'reports')
+   with check (bucket_id = 'reports');
+   ```
+   No `select` (read) policy is needed today — the download endpoint always regenerates the PDF in memory and streams it back directly, it never reads the stored object back through the client SDK; add one only if a future feature needs to serve the already-stored file without regenerating it. The INSERT+UPDATE pair (not just INSERT) matches `upload_report_pdf`'s `upsert: "true"` (`app/repositories/storage.py`) — re-uploading for the same certificate number overwrites rather than erroring. Deliberately broad ("any authenticated user"): the API layer's own creator/approver/admin + `status == 'issued'` check (`app/routers/sessions.py`) is what actually authorizes the action — same defense-in-depth split as every other write in this app (`app/repositories/storage.py`'s own docstring).
 3. Create the technician and approver demo accounts via Supabase Auth.
 4. Run `db/seed.sql` to promote the approver account.
 

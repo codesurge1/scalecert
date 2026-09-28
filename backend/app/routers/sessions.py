@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.contracts.common import IndicationType, SessionStatus, TestType
 from app.contracts.damp_heat import (
@@ -417,8 +417,33 @@ def issue_session(session_id: str, auth: AuthContext = Depends(get_auth_context)
         data={"certificate_number": certificate_number},
     )
 
+    # Generate the certificate PDF as part of issuing (fix/certificate-
+    # generation-wiring) — an issued session should always have a
+    # certificate, not depend on someone separately remembering to click
+    # "Download certificate" at least once. Deliberately best-effort: the
+    # issue itself (status + certificate number, both already committed
+    # above) must NEVER be rolled back or fail because PDF generation or
+    # Storage upload failed — those are retriable (the same "Download
+    # certificate" button regenerates on demand, `generate_session_report`
+    # above), the issue transition itself is not. `except Exception`
+    # (broad, deliberately, same non-fatal-audit-write convention as
+    # `_log_transition` above) — any failure here, of any kind, becomes a
+    # clearly worded, one-time `report_generation_error` on THIS response
+    # rather than an opaque 500 undoing an otherwise-valid approval.
+    report_generation_error = None
+    try:
+        _generate_and_store_certificate_pdf(auth.client, updated_row)
+    except Exception as exc:
+        logger.warning("certificate PDF generation failed for session %s at issue time: %s", session_id, exc)
+        report_generation_error = (
+            f"The certificate was issued, but the PDF could not be generated automatically ({exc}). "
+            'Use "Download certificate" to retry.'
+        )
+
     selection_rows = sessions_repo.get_session_test_selections(auth.client, session_id)
-    return _build_session_out(auth.client, updated_row, selection_rows)
+    result = _build_session_out(auth.client, updated_row, selection_rows)
+    result.report_generation_error = report_generation_error
+    return result
 
 
 @router.get("/{session_id}/weighing/sequence", response_model=list[WeighingSequenceEntryOut])
@@ -2231,10 +2256,61 @@ _OTHER_TEST_LABELS = {
 }
 
 
-def _verify_url(request: Request, certificate_number: str) -> str:
-    override = os.environ.get("PUBLIC_APP_BASE_URL")
-    base = override or str(request.base_url)
+def _verify_url(certificate_number: str) -> str:
+    """The full public verify URL a certificate's QR code encodes.
+    Deliberately does NOT fall back to `request.base_url`
+    (fix/certificate-generation-wiring): this backend is deployed as its
+    own Vercel service behind a `/api/:path*` rewrite from the `frontend`
+    service (docs/architecture.md) — there is no guarantee the ASGI
+    runtime is configured to trust forwarded-host headers, so
+    `request.base_url` is not reliably the public-facing domain a
+    certificate's own QR code needs to encode. A silently WRONG URL baked
+    into a printed/PDF certificate is worse than refusing to generate one
+    at all, so `PUBLIC_APP_BASE_URL` must be set explicitly
+    (docs/runbook.md) — this raises rather than guessing.
+    """
+    base = os.environ.get("PUBLIC_APP_BASE_URL")
+    if not base:
+        raise certificate_service.CertificateConfigError(
+            "PUBLIC_APP_BASE_URL is not set. It must be configured (docs/runbook.md) so a certificate's QR "
+            "code encodes the correct public verification URL — set it in the deployment environment and retry."
+        )
     return f"{base.rstrip('/')}/verify/{certificate_number}"
+
+
+def _generate_and_store_certificate_pdf(client, session_row: dict) -> bytes:
+    """Builds the certificate PDF and uploads it to the `reports` Storage
+    bucket for an ISSUED session — the one place this sequence lives,
+    shared by `issue_session` (best-effort, non-fatal to the issue itself)
+    and `generate_session_report` (on-demand/retry — the caller explicitly
+    asked for exactly this, so any failure here IS fatal to that request).
+    Raises `certificate_service.CertificateConfigError` or
+    `storage_repo.StorageError` on failure — the two genuinely fatal steps;
+    callers decide what that means for their own response.
+
+    Recording `report_storage_path` (`set_report_storage_path`) is its own,
+    ALWAYS non-fatal step even within this helper — unchanged from before
+    this refactor: it's fully deterministic from `certificate_number`
+    alone, so a failure here never loses the already-uploaded PDF, only a
+    future request's ability to see `report_storage_path` already set
+    (informational only, docs/architecture.md) — regenerating (calling
+    this again) trivially recovers it.
+    """
+    instrument_row = _get_instrument_or_404(client, session_row["instrument_id"])
+    data = _build_certificate_data(client, session_row, instrument_row)
+    verify_url = _verify_url(session_row["certificate_number"])
+    pdf_bytes = generate_certificate_pdf(data, verify_url)
+
+    storage_path = f"certificates/{session_row['certificate_number']}.pdf"
+    storage_repo.upload_report_pdf(client, path=storage_path, pdf_bytes=pdf_bytes)
+
+    try:
+        sessions_repo.set_report_storage_path(client, session_row["id"], storage_path)
+        session_row["report_storage_path"] = storage_path
+    except RepositoryError as exc:
+        logger.warning("could not record report_storage_path for session %s: %s", session_row["id"], exc)
+
+    return pdf_bytes
 
 
 def _build_certificate_data(client, session_row: dict, instrument_row: dict) -> certificate_service.CertificateData:
@@ -2321,15 +2397,18 @@ def _build_certificate_data(client, session_row: dict, instrument_row: dict) -> 
 
 
 @router.post("/{session_id}/report")
-def generate_session_report(
-    session_id: str, request: Request, auth: AuthContext = Depends(get_auth_context)
-) -> Response:
+def generate_session_report(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> Response:
     """Generates the certificate PDF for an ISSUED session, stores it in
     Supabase Storage, and returns the PDF bytes directly — approver/admin
     or the session's own creator only (item 1's authorization is
     deliberately broader than the lifecycle-transition endpoints above:
     generating a copy of your OWN already-issued certificate is not a
-    separation-of-duties-sensitive action)."""
+    separation-of-duties-sensitive action). Always regenerates on every
+    call, even if `report_storage_path` is already set
+    (fix/certificate-generation-wiring) — this is the on-demand fallback
+    for a session issued before this task, or whose auto-generation at
+    issue time failed: the frontend's "Download certificate" button always
+    calls this, never a dead end regardless of what's already stored."""
     session_row = _get_session_or_404(auth.client, session_id)
 
     role = profiles_repo.get_role(auth.client, auth.user_id)
@@ -2346,25 +2425,12 @@ def generate_session_report(
     except InvalidTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
-    data = _build_certificate_data(auth.client, session_row, instrument_row)
-    verify_url = _verify_url(request, session_row["certificate_number"])
-    pdf_bytes = generate_certificate_pdf(data, verify_url)
-
-    storage_path = f"certificates/{session_row['certificate_number']}.pdf"
     try:
-        storage_repo.upload_report_pdf(auth.client, path=storage_path, pdf_bytes=pdf_bytes)
+        pdf_bytes = _generate_and_store_certificate_pdf(auth.client, session_row)
+    except certificate_service.CertificateConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except storage_repo.StorageError as exc:
         raise HTTPException(status_code=500, detail=f"could not store the generated certificate: {exc}") from exc
-
-    # Non-fatal: `storage_path` is fully deterministic from
-    # `certificate_number` alone, so even if this bookkeeping write fails,
-    # the PDF itself is already safely stored and already in hand — unlike
-    # a return-reason, nothing here is lost if this one call fails.
-    try:
-        sessions_repo.set_report_storage_path(auth.client, session_id, storage_path)
-    except RepositoryError as exc:
-        logger.warning("could not record report_storage_path for session %s: %s", session_id, exc)
 
     return Response(
         content=pdf_bytes,

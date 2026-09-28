@@ -866,6 +866,83 @@ def _mock_report_plumbing(monkeypatch, *, list_readings=None, list_results=None)
     monkeypatch.setattr(sessions_repo, "set_report_storage_path", lambda client, session_id, path: None)
 
 
+# ---------------------------------------------------------------------------
+# Certificate generation wired into issuing itself (fix/certificate-
+# generation-wiring) — POST /sessions/{id}/issue now attempts to generate
+# and store the PDF as part of the SAME request that flips status to
+# 'issued', best-effort (never fatal to the issue), plus the on-demand
+# fallback (POST /report always regenerates, and fails loudly rather than
+# silently if PUBLIC_APP_BASE_URL is unconfigured).
+# ---------------------------------------------------------------------------
+
+_APPROVED_SESSION_ROW = dict(
+    _DRAFT_SESSION_ROW, status="approved", created_by=_OTHER_USER_ID, approved_by=_FAKE_AUTH.user_id
+)
+
+
+def _mock_issue_plumbing(monkeypatch, *, certificate_number="SC-2026-000001"):
+    """Shared setup for the tests below: an approver about to issue
+    someone else's approved session, with the certificate-number RPC and
+    the same certificate-generation plumbing `_mock_report_plumbing` uses
+    (readings/results/instrument/storage) already wired to succeed."""
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_APPROVED_SESSION_ROW))
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+    monkeypatch.setattr(sessions_repo, "issue_certificate_number", lambda client: certificate_number)
+    _mock_session_plumbing(
+        monkeypatch,
+        role="approver",
+        updated_row=dict(_APPROVED_SESSION_ROW, status="issued", certificate_number=certificate_number),
+    )
+    _mock_report_plumbing(monkeypatch)
+
+
+def test_issue_generates_and_persists_the_certificate_pdf_on_success(monkeypatch):
+    _mock_issue_plumbing(monkeypatch)
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "issued"
+    assert body["report_storage_path"] == "certificates/SC-2026-000001.pdf"
+    assert body["report_generation_error"] is None
+
+
+def test_issue_succeeds_even_when_certificate_generation_fails(monkeypatch):
+    # The issue itself (status + certificate number) must never be rolled
+    # back or fail because PDF/Storage generation failed — that failure is
+    # surfaced on this same response, and retriable via "Download
+    # certificate" (POST /report), never a dead end.
+    _mock_issue_plumbing(monkeypatch)
+
+    def failing_upload(client, **kwargs):
+        raise storage_repo.StorageError(operation="upload", hint="bucket unreachable")
+
+    monkeypatch.setattr(storage_repo, "upload_report_pdf", failing_upload)
+
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "issued"
+    assert body["certificate_number"] == "SC-2026-000001"
+    assert body["report_storage_path"] is None
+    assert body["report_generation_error"]
+    assert "Download certificate" in body["report_generation_error"]
+
+
+def test_issue_succeeds_even_when_public_app_base_url_is_unset(monkeypatch):
+    # Same non-fatal guarantee, for the OTHER genuinely-fatal-to-/report
+    # failure mode (below): a missing PUBLIC_APP_BASE_URL must not roll
+    # back an otherwise-valid issue either.
+    monkeypatch.delenv("PUBLIC_APP_BASE_URL", raising=False)
+    _mock_issue_plumbing(monkeypatch)
+
+    resp = client.post("/api/sessions/sess-1/issue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "issued"
+    assert body["report_storage_path"] is None
+    assert "PUBLIC_APP_BASE_URL" in body["report_generation_error"]
+
+
 def test_generate_report_happy_path_creator(monkeypatch):
     # The session's own creator (_FAKE_AUTH.user_id) downloading their own
     # issued certificate — no role check needed for this, unlike the
@@ -974,3 +1051,44 @@ def test_generate_report_succeeds_even_if_recording_storage_path_fails(monkeypat
     resp = client.post("/api/sessions/sess-1/report")
     assert resp.status_code == 200
     assert resp.content[:4] == b"%PDF"
+
+
+def test_generate_report_regenerates_even_when_report_storage_path_already_set(monkeypatch):
+    # The on-demand fallback (fix/certificate-generation-wiring): the
+    # "Download certificate" button always calls this endpoint, regardless
+    # of whether report_storage_path is already set — a session issued
+    # before this task, or whose auto-generation at issue time failed, is
+    # never a dead end. This must actually regenerate/re-upload, not skip.
+    monkeypatch.setattr(
+        sessions_repo,
+        "get_session",
+        lambda client, session_id: dict(_ISSUED_SESSION_ROW, report_storage_path="certificates/SC-2026-000001.pdf"),
+    )
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    upload_calls = []
+    monkeypatch.setattr(readings_repo, "list_readings", _fake_list_readings_weighing_only)
+    monkeypatch.setattr(readings_repo, "list_results", _fake_list_results_weighing_only)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(
+        storage_repo, "upload_report_pdf", lambda client, **kwargs: upload_calls.append(kwargs) or kwargs["path"]
+    )
+    monkeypatch.setattr(sessions_repo, "set_report_storage_path", lambda client, session_id, path: None)
+
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 200
+    assert resp.content[:4] == b"%PDF"
+    assert len(upload_calls) == 1  # actually re-uploaded, not skipped
+
+
+def test_generate_report_fails_clearly_when_public_app_base_url_is_unset(monkeypatch):
+    # "Fail loudly" (fix/certificate-generation-wiring): never silently
+    # encode a wrong URL into the certificate's QR code — a clear,
+    # actionable 500 instead.
+    monkeypatch.delenv("PUBLIC_APP_BASE_URL", raising=False)
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: dict(_ISSUED_SESSION_ROW))
+    monkeypatch.setattr(profiles_repo, "get_role", lambda client, user_id: "technician")
+    _mock_report_plumbing(monkeypatch)
+
+    resp = client.post("/api/sessions/sess-1/report")
+    assert resp.status_code == 500
+    assert "PUBLIC_APP_BASE_URL" in resp.json()["detail"]

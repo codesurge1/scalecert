@@ -27,6 +27,16 @@ from typing import Optional
 from app.contracts.instrument import InstrumentOut
 
 
+class CertificateConfigError(Exception):
+    """Raised when certificate generation can't proceed because required
+    deployment configuration is missing — currently just `PUBLIC_APP_BASE_URL`
+    (`app/routers/sessions.py`'s `_verify_url`). Deliberately its own type,
+    never silently worked around: a QR code baked into an issued,
+    physical-equivalent certificate that encodes the WRONG verify URL is
+    worse than refusing to generate the certificate at all
+    (`fix/certificate-generation-wiring`)."""
+
+
 @dataclass(frozen=True)
 class WeighingRow:
     """One row of the Weighing certificate table — pulled straight from a
