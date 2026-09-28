@@ -13,13 +13,18 @@ The order of the two runs never matters: the error is a magnitude, not a
 directional delta, so compute_run_comparison(Ec_a=x, Ec_b=y, ...) and
 compute_run_comparison(Ec_a=y, Ec_b=x, ...) always agree.
 
+`compute_durability_check` (added `feat/damp-heat-endurance`) is
+Endurance's own aggregate on top of the same per-load comparisons: EVERY
+load's durability error must be within mpe, not just some.
+
 All arithmetic is Decimal, never float. Every input is required and
 type-checked explicitly — no default values. Standard library only.
 """
 
 from decimal import Decimal
+from typing import Iterable
 
-from engine.types import RunComparisonResult
+from engine.types import DurabilityCheckResult, RunComparisonResult
 
 
 def _require_decimal(name: str, value) -> Decimal:
@@ -56,3 +61,26 @@ def compute_run_comparison(*, Ec_a: Decimal, Ec_b: Decimal, mpe: Decimal) -> Run
         margin=margin,
         passed=passed,
     )
+
+
+def compute_durability_check(comparisons: Iterable[RunComparisonResult]) -> DurabilityCheckResult:
+    """Endurance's own aggregate verdict rule (R76-1 A.6, R76-2 page 47):
+    the durability error due to wear and tear must be `<= mpe` for EVERY
+    load, not just some — a genuinely different aggregation from a single
+    `compute_run_comparison` call, the same "whole-set property, not a
+    single reading" shape as `engine.repeatability.compute_repeatability_series`
+    (spread across a whole series) and `engine.tilting.compute_tilting_loaded_check`
+    (max deviation across positions).
+
+    An EMPTY `comparisons` (no matching loads submitted in both runs yet)
+    is never trusted as a pass — `all_passed` is `False` until there is at
+    least one comparison, mirroring `passed` always starting `False` in
+    every other "nothing submitted yet" state in this app.
+    """
+    comparisons = tuple(comparisons)
+    for index, comparison in enumerate(comparisons):
+        if not isinstance(comparison, RunComparisonResult):
+            raise TypeError(f"comparisons[{index}] must be a RunComparisonResult, got {type(comparison).__name__}")
+
+    all_passed = bool(comparisons) and all(comparison.passed for comparison in comparisons)
+    return DurabilityCheckResult(comparisons=comparisons, all_passed=all_passed)

@@ -7,6 +7,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.contracts.common import IndicationType, SessionStatus, TestType
+from app.contracts.damp_heat import (
+    DampHeatReadingRecordOut,
+    DampHeatReadingSubmitIn,
+    DampHeatResultOut,
+    reading_and_result_to_record_out as damp_heat_reading_and_result_to_record_out,
+)
 from app.contracts.discrimination import (
     DiscriminationCheckOut,
     DiscriminationReadingRecordOut,
@@ -28,6 +34,15 @@ from app.contracts.disturbance import (
     DisturbanceResultOut,
     reading_and_result_to_record_out as disturbance_reading_and_result_to_record_out,
 )
+from app.contracts.endurance import (
+    DurabilityCheckOut,
+    EnduranceCyclingIn,
+    EnduranceReadingRecordOut,
+    EnduranceReadingSubmitIn,
+    EnduranceResultOut,
+    durability_result_to_out,
+    reading_and_result_to_record_out as endurance_reading_and_result_to_record_out,
+)
 from app.contracts.instrument import instrument_out_from_row, instrument_params_from_row
 from app.contracts.repeatability import RepeatabilityReadingSubmitIn, RepeatabilitySeriesOut
 from app.contracts.sensitivity import (
@@ -37,7 +52,12 @@ from app.contracts.sensitivity import (
     SensitivityResultOut,
     reading_and_result_to_record_out as sensitivity_reading_and_result_to_record_out,
 )
-from app.contracts.runs import RunComparisonEntryOut, TestRunCreateIn, TestRunOut, run_row_to_out
+from app.contracts.runs import (
+    RunComparisonEntryOut,
+    TestRunCreateIn,
+    TestRunOut,
+    run_row_to_out,
+)
 from app.contracts.session import SessionIn, SessionOut, SessionReturnIn, session_out_from_rows
 from app.contracts.tilting import TiltingReadingSubmitIn, TiltingStateOut
 from app.contracts.voltage_variations import (
@@ -71,9 +91,11 @@ from app.repositories import sessions as sessions_repo
 from app.repositories import storage as storage_repo
 from app.repositories.errors import RepositoryError
 from app.services import certificate as certificate_service
+from app.services import damp_heat as damp_heat_service
 from app.services import discrimination as discrimination_service
 from app.services import disturbance as disturbance_service
 from app.services import eccentricity as eccentricity_service
+from app.services import endurance as endurance_service
 from app.services import repeatability as repeatability_service
 from app.services import runs as runs_service
 from app.services import sensitivity as sensitivity_service
@@ -620,6 +642,450 @@ def submit_weighing_reading(
         logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
 
     return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Damp heat, steady state (clause 13, B.2, R76-2 pages 37-39). THREE runs
+# of the exact same Weighing procedure (feat/test-runs-conditions) — a)
+# Initial (reference temp), b) high temp + 85% RH, c) Final (reference
+# temp) — auto-provisioned by POST .../damp-heat/setup rather than
+# technician-labelled like Weighing's own optional extra runs, since the
+# three-run structure IS the test, not an opt-in extra. No new engine math
+# (app/services/damp_heat.py): every reading here is computed by the exact
+# same engine.weighing.compute_weighing_result Weighing itself uses. Each
+# run's own |Ec| <= mpe check is the real pass/fail (unlike Endurance,
+# below); the cross-run comparison (GET .../runs/compare, reused from
+# feat/test-runs-conditions unmodified) is informational — surfacing drift
+# between runs for the technician/approver, not itself a gate.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{session_id}/damp-heat/setup", response_model=list[TestRunOut])
+def setup_damp_heat_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
+    """Idempotent: creates whichever of the three fixed a/b/c runs don't
+    already exist for this session, then returns the full, ordered list —
+    safe to call every time the Damp heat page loads."""
+    session_row = _get_session_or_404(auth.client, session_id)
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    existing_runs = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+    missing_labels = runs_service.ensure_fixed_run_labels(existing_runs, damp_heat_service.FIXED_RUN_LABELS)
+    for label in missing_labels:
+        existing_runs = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+        ordinal = runs_service.next_ordinal(existing_runs)
+        try:
+            runs_repo.insert_run(
+                auth.client,
+                session_id=session_id,
+                test_type=TestType.DAMP_HEAT.value,
+                run_label=label,
+                conditions=None,
+                ordinal=ordinal,
+                created_by=auth.user_id,
+            )
+        except RepositoryError as exc:
+            raise HTTPException(
+                status_code=403 if exc.likely_rls else 500,
+                detail=f"could not set up the Damp heat runs ({exc.operation} on {exc.table}): {exc.hint}",
+            ) from exc
+
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+    return [run_row_to_out(row) for row in run_rows]
+
+
+@router.get("/{session_id}/damp-heat/sequence", response_model=list[WeighingSequenceEntryOut])
+def get_damp_heat_sequence(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[WeighingSequenceEntryOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    sequence = damp_heat_service.build_sequence(instrument, VerificationType(session_row["verification_type"]))
+    return [
+        WeighingSequenceEntryOut(sequence_no=i, L=entry.L, m=entry.m, kind=entry.kind, mpe=entry.mpe)
+        for i, entry in enumerate(sequence)
+    ]
+
+
+def _damp_heat_reading_and_result_rows(client, session_id: str) -> tuple[list[dict], dict]:
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+    result_rows = readings_repo.list_results(client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+    return reading_rows, results_by_reading_id
+
+
+def _damp_heat_records_for_run(
+    reading_rows: list[dict], results_by_reading_id: dict, run_id: Optional[str]
+) -> list[DampHeatReadingRecordOut]:
+    matching_rows = [row for row in reading_rows if row.get("run_id") == run_id]
+    latest_by_key = {
+        (reading_row["sequence_no"], reading_row["direction"]): (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in matching_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+    records = [
+        damp_heat_reading_and_result_to_record_out(reading_row, result_row)
+        for reading_row, result_row in latest_by_key.values()
+    ]
+    records.sort(key=lambda record: (record.sequence_no, record.direction.value))
+    return records
+
+
+@router.get("/{session_id}/damp-heat/runs/compare", response_model=list[RunComparisonEntryOut])
+def compare_damp_heat_runs(
+    session_id: str,
+    run_id_a: Optional[str] = None,
+    run_id_b: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+) -> list[RunComparisonEntryOut]:
+    _get_session_or_404(auth.client, session_id)
+    reading_rows, results_by_reading_id = _damp_heat_reading_and_result_rows(auth.client, session_id)
+    records_a = _damp_heat_records_for_run(reading_rows, results_by_reading_id, run_id_a)
+    records_b = _damp_heat_records_for_run(reading_rows, results_by_reading_id, run_id_b)
+    return runs_service.compare_records(records_a, records_b, run_id_a=run_id_a, run_id_b=run_id_b)
+
+
+@router.get("/{session_id}/damp-heat/readings", response_model=list[DampHeatReadingRecordOut])
+def list_damp_heat_readings(
+    session_id: str,
+    run_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+) -> list[DampHeatReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)
+    reading_rows, results_by_reading_id = _damp_heat_reading_and_result_rows(auth.client, session_id)
+    return _damp_heat_records_for_run(reading_rows, results_by_reading_id, run_id)
+
+
+@router.post("/{session_id}/damp-heat/readings", response_model=DampHeatResultOut, status_code=201)
+def submit_damp_heat_reading(
+    session_id: str,
+    payload: DampHeatReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> DampHeatResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if payload.run_id is not None:
+        run_row = runs_repo.get_run(auth.client, payload.run_id)
+        if run_row is None or run_row["session_id"] != session_id or run_row["test_type"] != TestType.DAMP_HEAT.value:
+            raise HTTPException(
+                status_code=422, detail=f"run {payload.run_id!r} does not belong to this session's Damp heat test"
+            )
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = damp_heat_service.compute_result_for_submission(payload, instrument, verification_type)
+    except damp_heat_service.SequenceNumberOutOfRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.DAMP_HEAT.value,
+            sequence_no=payload.sequence_no,
+            direction=payload.direction.value,
+            run_id=payload.run_id,
+            data=submission.reading.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.DAMP_HEAT.value,
+            reading_id=reading_row["id"],
+            run_id=payload.run_id,
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="damp_heat_reading_submitted",
+            data={"sequence_no": payload.sequence_no, "run_id": payload.run_id, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+# ---------------------------------------------------------------------------
+# Endurance (clause 15, A.6, R76-2 pages 46-47). TWO runs of the exact same
+# Weighing procedure (a) Initial, c) Final) around a non-computed "b)
+# Performance of the test" cycling step (number of loadings, load applied
+# — recorded on a run's own `conditions`, never computed). The form's own
+# extra column — durability error due to wear and tear =
+# |Ec_initial - Ec_final| — and its all-loads-must-pass verdict reuse
+# engine.comparison.compute_run_comparison/compute_durability_check
+# (feat/test-runs-conditions) verbatim; no new error-calculation math.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{session_id}/endurance/setup", response_model=list[TestRunOut])
+def setup_endurance_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
+    """Idempotent, same shape as setup_damp_heat_runs — creates whichever
+    of the two fixed a)/c) runs don't already exist, returns the full,
+    ordered list."""
+    session_row = _get_session_or_404(auth.client, session_id)
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    existing_runs = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    missing_labels = runs_service.ensure_fixed_run_labels(existing_runs, endurance_service.FIXED_RUN_LABELS)
+    for label in missing_labels:
+        existing_runs = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+        ordinal = runs_service.next_ordinal(existing_runs)
+        try:
+            runs_repo.insert_run(
+                auth.client,
+                session_id=session_id,
+                test_type=TestType.ENDURANCE.value,
+                run_label=label,
+                conditions=None,
+                ordinal=ordinal,
+                created_by=auth.user_id,
+            )
+        except RepositoryError as exc:
+            raise HTTPException(
+                status_code=403 if exc.likely_rls else 500,
+                detail=f"could not set up the Endurance runs ({exc.operation} on {exc.table}): {exc.hint}",
+            ) from exc
+
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    return [run_row_to_out(row) for row in run_rows]
+
+
+@router.patch("/{session_id}/endurance/cycling", response_model=TestRunOut)
+def update_endurance_cycling(
+    session_id: str,
+    payload: EnduranceCyclingIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> TestRunOut:
+    """b) Performance of the test (page 47) — number of loadings/load
+    applied. Recorded on the Final run's own `conditions` (ADR-0011),
+    looked up by its own fixed label — the server derives which run this
+    belongs to, so the client never has to know or pass a run id for it,
+    same "server derives it" discipline as every other computed/derived
+    value in this app."""
+    session_row = _get_session_or_404(auth.client, session_id)
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    final_run = next((row for row in run_rows if row["run_label"] == endurance_service.FINAL_RUN_LABEL), None)
+    if final_run is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Endurance's Final run hasn't been set up yet — call POST .../endurance/setup first",
+        )
+
+    conditions = payload.model_dump(mode="json", exclude_none=True) or None
+    try:
+        updated_row = runs_repo.update_run_conditions(auth.client, run_id=final_run["id"], conditions=conditions)
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not update the cycling step ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+    return run_row_to_out(updated_row)
+
+
+@router.get("/{session_id}/endurance/sequence", response_model=list[WeighingSequenceEntryOut])
+def get_endurance_sequence(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[WeighingSequenceEntryOut]:
+    session_row = _get_session_or_404(auth.client, session_id)
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    sequence = endurance_service.build_sequence(instrument, VerificationType(session_row["verification_type"]))
+    return [
+        WeighingSequenceEntryOut(sequence_no=i, L=entry.L, m=entry.m, kind=entry.kind, mpe=entry.mpe)
+        for i, entry in enumerate(sequence)
+    ]
+
+
+def _endurance_reading_and_result_rows(client, session_id: str) -> tuple[list[dict], dict]:
+    reading_rows = readings_repo.list_readings(client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    result_rows = readings_repo.list_results(client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    results_by_reading_id = {row["reading_id"]: row for row in result_rows if row.get("reading_id")}
+    return reading_rows, results_by_reading_id
+
+
+def _endurance_records_for_run(
+    reading_rows: list[dict], results_by_reading_id: dict, run_id: Optional[str]
+) -> list[EnduranceReadingRecordOut]:
+    matching_rows = [row for row in reading_rows if row.get("run_id") == run_id]
+    latest_by_key = {
+        (reading_row["sequence_no"], reading_row["direction"]): (reading_row, results_by_reading_id[reading_row["id"]])
+        for reading_row in matching_rows
+        if reading_row["id"] in results_by_reading_id
+    }
+    records = [
+        endurance_reading_and_result_to_record_out(reading_row, result_row)
+        for reading_row, result_row in latest_by_key.values()
+    ]
+    records.sort(key=lambda record: (record.sequence_no, record.direction.value))
+    return records
+
+
+@router.get("/{session_id}/endurance/readings", response_model=list[EnduranceReadingRecordOut])
+def list_endurance_readings(
+    session_id: str,
+    run_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+) -> list[EnduranceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)
+    reading_rows, results_by_reading_id = _endurance_reading_and_result_rows(auth.client, session_id)
+    return _endurance_records_for_run(reading_rows, results_by_reading_id, run_id)
+
+
+@router.post("/{session_id}/endurance/readings", response_model=EnduranceResultOut, status_code=201)
+def submit_endurance_reading(
+    session_id: str,
+    payload: EnduranceReadingSubmitIn,
+    auth: AuthContext = Depends(get_auth_context),
+) -> EnduranceResultOut:
+    session_row = _get_session_or_404(auth.client, session_id)
+
+    try:
+        ensure_session_is_draft(SessionStatus(session_row["status"]))
+    except SessionNotDraft as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if payload.run_id is not None:
+        run_row = runs_repo.get_run(auth.client, payload.run_id)
+        if run_row is None or run_row["session_id"] != session_id or run_row["test_type"] != TestType.ENDURANCE.value:
+            raise HTTPException(
+                status_code=422, detail=f"run {payload.run_id!r} does not belong to this session's Endurance test"
+            )
+
+    instrument_row = _get_instrument_or_404(auth.client, session_row["instrument_id"])
+    instrument = instrument_params_from_row(instrument_row)
+    verification_type = VerificationType(session_row["verification_type"])
+
+    try:
+        submission = endurance_service.compute_result_for_submission(payload, instrument, verification_type)
+    except endurance_service.SequenceNumberOutOfRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        reading_row = readings_repo.insert_reading(
+            auth.client,
+            session_id=session_id,
+            entered_by=auth.user_id,
+            test_type=TestType.ENDURANCE.value,
+            sequence_no=payload.sequence_no,
+            direction=payload.direction.value,
+            run_id=payload.run_id,
+            data=submission.reading.model_dump(mode="json"),
+        )
+    except RepositoryError as exc:
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"could not record the reading ({exc.operation} on {exc.table}): {exc.hint}",
+        ) from exc
+
+    try:
+        readings_repo.insert_result(
+            auth.client,
+            session_id=session_id,
+            test_type=TestType.ENDURANCE.value,
+            reading_id=reading_row["id"],
+            run_id=payload.run_id,
+            result=submission.result_out.model_dump(mode="json"),
+            passed=submission.result_out.passed,
+        )
+    except RepositoryError as exc:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=403 if exc.likely_rls else 500,
+            detail=f"failed to record the computed result ({exc.hint}); the reading was rolled back",
+        ) from exc
+    except Exception:
+        readings_repo.delete_reading(auth.client, reading_row["id"])
+        raise HTTPException(
+            status_code=500,
+            detail="failed to record the computed result; the reading was rolled back",
+        ) from None
+
+    try:
+        readings_repo.insert_audit_log(
+            auth.client,
+            session_id=session_id,
+            actor_id=auth.user_id,
+            action="endurance_reading_submitted",
+            data={"sequence_no": payload.sequence_no, "run_id": payload.run_id, "passed": submission.result_out.passed},
+        )
+    except Exception as exc:
+        logger.warning("audit_log insert failed for session %s: %s", session_id, exc)
+
+    return submission.result_out
+
+
+@router.get("/{session_id}/endurance/durability", response_model=DurabilityCheckOut)
+def get_endurance_durability(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> DurabilityCheckOut:
+    """The form's own extra column and verdict (page 47): durability error
+    due to wear and tear = |Ec_initial - Ec_final| per load, PASS only if
+    EVERY load is within mpe (engine.comparison.compute_durability_check).
+    Looks up the Initial/Final runs by their own fixed labels — the server
+    derives which run is which, the client never has to pass run ids."""
+    _get_session_or_404(auth.client, session_id)
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    runs_by_label = {row["run_label"]: row for row in run_rows}
+    initial_run = runs_by_label.get(endurance_service.FIXED_RUN_LABELS[0])
+    final_run = runs_by_label.get(endurance_service.FIXED_RUN_LABELS[1])
+    if initial_run is None or final_run is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Endurance's Initial/Final runs haven't been set up yet — call POST .../endurance/setup first",
+        )
+
+    reading_rows, results_by_reading_id = _endurance_reading_and_result_rows(auth.client, session_id)
+    initial_records = _endurance_records_for_run(reading_rows, results_by_reading_id, initial_run["id"])
+    final_records = _endurance_records_for_run(reading_rows, results_by_reading_id, final_run["id"])
+
+    entries = runs_service.compare_records(
+        initial_records, final_records, run_id_a=initial_run["id"], run_id_b=final_run["id"]
+    )
+    durability_result = runs_service.durability_check_from_entries(entries)
+    return durability_result_to_out(durability_result, entries)
 
 
 # ---------------------------------------------------------------------------

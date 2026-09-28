@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from app.contracts.common import Direction
 from app.contracts.weighing import WeighingReadingRecordOut
-from app.services.runs import compare_records, next_ordinal
+from app.services.runs import compare_records, durability_check_from_entries, ensure_fixed_run_labels, next_ordinal
 
 D = Decimal
 
@@ -82,3 +82,63 @@ def test_compare_records_sorts_by_sequence_no_then_direction():
         (0, Direction.UP),
         (1, Direction.UP),
     ]
+
+
+# -- ensure_fixed_run_labels (Damp heat/Endurance's fixed-run setup) -------
+
+
+def test_ensure_fixed_run_labels_returns_all_labels_when_no_runs_exist():
+    missing = ensure_fixed_run_labels([], ["a) Initial test", "c) Final test"])
+    assert missing == ["a) Initial test", "c) Final test"]
+
+
+def test_ensure_fixed_run_labels_returns_only_the_missing_ones():
+    existing = [{"run_label": "a) Initial test", "ordinal": 0}]
+    missing = ensure_fixed_run_labels(existing, ["a) Initial test", "c) Final test"])
+    assert missing == ["c) Final test"]
+
+
+def test_ensure_fixed_run_labels_is_idempotent_once_all_exist():
+    existing = [{"run_label": "a) Initial test"}, {"run_label": "c) Final test"}]
+    missing = ensure_fixed_run_labels(existing, ["a) Initial test", "c) Final test"])
+    assert missing == []
+
+
+# -- durability_check_from_entries (Endurance's own aggregate) -------------
+
+
+def _comparison_entry(ec_a, ec_b, mpe):
+    from app.contracts.runs import RunComparisonEntryOut
+
+    variation_error = abs(D(ec_a) - D(ec_b))
+    return RunComparisonEntryOut(
+        sequence_no=0,
+        direction=Direction.UP,
+        run_id_a="run-initial",
+        run_id_b="run-final",
+        Ec_a=D(ec_a),
+        Ec_b=D(ec_b),
+        variation_error=variation_error,
+        mpe=D(mpe),
+        margin=D(mpe) - variation_error,
+        passed=variation_error <= D(mpe),
+    )
+
+
+def test_durability_check_from_entries_all_passing():
+    entries = [_comparison_entry("0.1", "0.1", "0.5"), _comparison_entry("0.2", "0.3", "0.5")]
+    result = durability_check_from_entries(entries)
+    assert result.all_passed is True
+    assert len(result.comparisons) == 2
+
+
+def test_durability_check_from_entries_one_failing_load_fails_the_whole_check():
+    entries = [_comparison_entry("0.1", "0.1", "0.5"), _comparison_entry("0.9", "0.1", "0.5")]
+    result = durability_check_from_entries(entries)
+    assert result.all_passed is False
+
+
+def test_durability_check_from_entries_empty_never_passes():
+    result = durability_check_from_entries([])
+    assert result.all_passed is False
+    assert result.comparisons == ()
