@@ -102,9 +102,23 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    // `md:h-dvh md:overflow-hidden` (new, `fix/sticky-sidebar`) — same
+    // fixed-viewport-frame technique `FocusedShell` below already proved
+    // (there gated at `lg`, here at `md` — the breakpoint the persistent
+    // sidebar itself switches on, since below it there's no sidebar to
+    // keep pinned; the mobile drawer is already `fixed`-positioned and
+    // wholly unaffected either way). Below `md`, this stays plain
+    // `min-h-screen` — normal document flow, content stacks, the whole
+    // page scrolls — the pre-existing mobile behavior, untouched. At `md`+,
+    // this container becomes exactly one viewport tall and non-scrolling
+    // itself, so `<main>` below (not the document) is the one thing that
+    // scrolls, and the sidebar — sized by the SAME flex-row `align-items:
+    // stretch` default `WeighingFormTable`'s own two-column layout already
+    // relies on (docs/architecture.md) — now genuinely fills that fixed
+    // height instead of being only as tall as its own content.
+    <div className="flex min-h-screen bg-background md:h-dvh md:overflow-hidden">
       {/* Desktop sidebar — persistent, never collapses to a hamburger. */}
-      <aside className="hidden w-64 flex-col border-r bg-primary text-primary-foreground md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r bg-primary text-primary-foreground md:flex">
         <SidebarContent profile={profile} session={session} onLogout={handleLogout} />
       </aside>
 
@@ -142,7 +156,13 @@ export function AppShell() {
         />
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* `md:min-h-0` — without it, this flex column defaults to a min
+          height equal to its own content (`<main>`'s full, unclamped
+          height), which would silently defeat the parent's `md:h-dvh`
+          constraint above and bring back document-level scrolling — the
+          same CSS Flexbox gotcha `FocusedShell`'s own comment already
+          documents for its `lg:min-h-0` chain. */}
+      <div className="flex min-w-0 flex-1 flex-col md:min-h-0">
         {/* Mobile top bar — hamburger + wordmark. Hidden on desktop, where
             the persistent sidebar already shows the wordmark. */}
         <header className="flex items-center gap-3 border-b bg-primary px-4 py-3 text-primary-foreground md:hidden">
@@ -158,7 +178,14 @@ export function AppShell() {
           <span className="text-sm font-semibold tracking-wide">ScaleCert</span>
         </header>
 
-        <main className="flex-1 px-6 py-8">
+        {/* The one scrolling region at `md`+ (`md:overflow-y-auto`, paired
+            with `md:min-h-0` so it can actually shrink to its share of the
+            fixed-height row instead of growing to content size first) —
+            every AppShell page (dashboard, instruments list, session
+            overview, …) scrolls HERE now, never the document, so the
+            sidebar beside it never moves. Below `md`, plain normal-flow
+            scrolling, unchanged. */}
+        <main className="flex-1 px-6 py-8 md:min-h-0 md:overflow-y-auto">
           <div className="mx-auto max-w-6xl">
             <Outlet />
           </div>
