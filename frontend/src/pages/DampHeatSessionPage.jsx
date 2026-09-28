@@ -49,11 +49,17 @@ export function DampHeatSessionPage() {
       .then((sessionData) => {
         if (cancelled) return undefined;
         setSession(sessionData);
-        return Promise.all([
-          apiFetch(`/instruments/${sessionData.instrument_id}`),
-          apiFetch(`/sessions/${id}/damp-heat/sequence`),
-          apiFetch(`/sessions/${id}/damp-heat/setup`, { method: "POST" }),
-        ]);
+        // POST .../damp-heat/setup auto-provisions the three fixed runs
+        // and is draft-only (409s otherwise, db/schema.sql's runs_write
+        // policy) — it may only fire while this session is draft. Viewing
+        // a non-draft session (e.g. an approver) uses the read-only
+        // GET .../damp-heat/runs listing instead, which never creates
+        // anything — see docs/errors/ERROR_LOG.md.
+        const runsFetch =
+          sessionData.status === "draft"
+            ? apiFetch(`/sessions/${id}/damp-heat/setup`, { method: "POST" })
+            : apiFetch(`/sessions/${id}/damp-heat/runs`);
+        return Promise.all([apiFetch(`/instruments/${sessionData.instrument_id}`), apiFetch(`/sessions/${id}/damp-heat/sequence`), runsFetch]);
       })
       .then((results) => {
         if (cancelled || !results) return;
@@ -154,7 +160,14 @@ export function DampHeatSessionPage() {
     );
   }
 
-  const loadingTable = sequence === undefined || runs === undefined || selectedRunId === null || readingRecords === undefined;
+  // `runs` can legitimately settle at [] — a non-draft session viewed
+  // read-only (e.g. by an approver) whose Damp heat runs were never
+  // provisioned (the technician never opened this page while it was
+  // still draft) — that's "nothing recorded", not "still loading", so it
+  // gets its own branch below rather than spinning forever waiting for a
+  // `selectedRunId` that will never be set.
+  const loadingTable = sequence === undefined || runs === undefined;
+  const noRunsRecorded = runs?.length === 0;
 
   return (
     <div className="grid gap-2 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
@@ -174,6 +187,14 @@ export function DampHeatSessionPage() {
             No load sequence could be generated for this instrument.
           </CardContent>
         </Card>
+      ) : noRunsRecorded ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No Damp heat runs have been recorded for this session.
+          </CardContent>
+        </Card>
+      ) : selectedRunId === null || readingRecords === undefined ? (
+        <Skeleton className="h-[600px] w-full" />
       ) : (
         <div className="lg:min-h-0 lg:flex-1 lg:overflow-hidden">
           <WeighingFormTable

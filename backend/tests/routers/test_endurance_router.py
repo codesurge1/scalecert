@@ -105,6 +105,42 @@ def test_setup_409_when_session_not_draft(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Read-only run listing — fix/no-draft-writes-on-readonly-session. Unlike
+# POST .../setup above, this must work on a non-draft session (an approver
+# viewing a submitted session) without 409ing and without ever calling
+# insert_run — it only reads whatever runs already exist.
+# ---------------------------------------------------------------------------
+
+
+def test_list_runs_succeeds_on_a_non_draft_session_without_creating_anything(monkeypatch):
+    _mock_session_and_instrument(monkeypatch, dict(_DRAFT_SESSION_ROW, status="submitted"))
+    existing = [
+        {"id": f"run-{i}", "session_id": "sess-1", "test_type": "endurance", "run_label": label,
+         "conditions": None, "ordinal": i, "created_by": _FAKE_AUTH.user_id, "created_at": "t"}
+        for i, label in enumerate(FIXED_RUN_LABELS)
+    ]
+    monkeypatch.setattr(runs_repo, "list_runs", lambda client, session_id, test_type: existing)
+
+    def fail_insert(client, **kwargs):
+        raise AssertionError("a read-only runs listing must never insert a run")
+
+    monkeypatch.setattr(runs_repo, "insert_run", fail_insert)
+
+    resp = client.get("/api/sessions/sess-1/endurance/runs")
+    assert resp.status_code == 200
+    assert [run["run_label"] for run in resp.json()] == FIXED_RUN_LABELS
+
+
+def test_list_runs_returns_empty_list_when_none_provisioned_yet(monkeypatch):
+    _mock_session_and_instrument(monkeypatch, dict(_DRAFT_SESSION_ROW, status="submitted"))
+    monkeypatch.setattr(runs_repo, "list_runs", lambda client, session_id, test_type: [])
+
+    resp = client.get("/api/sessions/sess-1/endurance/runs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
 # b) Performance of the test — cycling-step PATCH
 # ---------------------------------------------------------------------------
 

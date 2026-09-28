@@ -105,7 +105,26 @@ export function SessionPage() {
       .then((sessionData) => {
         if (cancelled) return undefined;
         setSession(sessionData);
-        return Promise.all([
+        // Damp heat/Endurance run listing: POST .../setup auto-provisions
+        // the fixed a/b/c (or a/c) runs and is draft-only (409s otherwise,
+        // db/schema.sql's runs_write policy) — it may only fire when this
+        // session is actually draft. A non-draft session (e.g. an approver
+        // viewing a submitted session) uses the read-only GET .../runs
+        // listing instead, which never creates anything and carries no
+        // draft requirement (runs_select) — see docs/errors/ERROR_LOG.md.
+        const isDraft = sessionData.status === "draft";
+        const dampHeatRunsFetch = isDraft
+          ? apiFetch(`/sessions/${id}/damp-heat/setup`, { method: "POST" })
+          : apiFetch(`/sessions/${id}/damp-heat/runs`);
+        const enduranceRunsFetch = isDraft
+          ? apiFetch(`/sessions/${id}/endurance/setup`, { method: "POST" })
+          : apiFetch(`/sessions/${id}/endurance/runs`);
+        // allSettled, not all: every one of these is a secondary/optional
+        // read for a specific test's progress row — one failing (network
+        // blip, or a draft-only call that somehow still 409s) must never
+        // blank the whole overview. Only a rejection from the primary
+        // `GET /sessions/{id}` fetch above reaches the .catch() below.
+        return Promise.allSettled([
           apiFetch(`/instruments/${sessionData.instrument_id}`),
           apiFetch(`/sessions/${id}/weighing/sequence`),
           apiFetch(`/sessions/${id}/weighing/readings`),
@@ -126,16 +145,13 @@ export function SessionPage() {
           apiFetch(`/sessions/${id}/radiated-em-immunity/readings`),
           apiFetch(`/sessions/${id}/conducted-rf-immunity/readings`),
           apiFetch(`/sessions/${id}/road-vehicle-transients/readings`),
-          // Idempotent (a no-op once the fixed runs already exist) — the
-          // same setup call the test pages themselves make; here it's
-          // just how the overview learns which run ids to sum readings
-          // across, below.
-          apiFetch(`/sessions/${id}/damp-heat/setup`, { method: "POST" }),
-          apiFetch(`/sessions/${id}/endurance/setup`, { method: "POST" }),
+          dampHeatRunsFetch,
+          enduranceRunsFetch,
         ]);
       })
-      .then((results) => {
-        if (cancelled || !results) return;
+      .then((settledResults) => {
+        if (cancelled || !settledResults) return;
+        const value = (result, fallback) => (result.status === "fulfilled" ? result.value : fallback);
         const [
           instrumentData,
           sequenceData,
@@ -157,31 +173,31 @@ export function SessionPage() {
           radiatedEmImmunityReadingsData,
           conductedRfImmunityReadingsData,
           roadVehicleTransientsReadingsData,
-          dampHeatRunsData,
-          enduranceRunsData,
-        ] = results;
-        setInstrument(instrumentData);
-        setWeighingSequence(sequenceData);
-        setWeighingReadings(weighingReadingsData);
-        setZeroTareChecks(checksData);
-        setZeroTareReadings(zeroTareReadingsData);
-        setRepeatabilitySeries(seriesData);
-        setEccentricityReadings(eccentricityReadingsData);
-        setDiscriminationChecks(discriminationChecksData);
-        setDiscriminationReadings(discriminationReadingsData);
-        setSensitivityChecks(sensitivityChecksData);
-        setSensitivityReadings(sensitivityReadingsData);
-        setTiltingState(tiltingStateData);
-        setVoltageVariationsReadings(voltageVariationsReadingsData);
-        setAcMainsDipsReadings(acMainsDipsReadingsData);
-        setElectricalBurstsReadings(electricalBurstsReadingsData);
-        setElectrostaticDischargesReadings(electrostaticDischargesReadingsData);
-        setSurgesReadings(surgesReadingsData);
-        setRadiatedEmImmunityReadings(radiatedEmImmunityReadingsData);
-        setConductedRfImmunityReadings(conductedRfImmunityReadingsData);
-        setRoadVehicleTransientsReadings(roadVehicleTransientsReadingsData);
-        setDampHeatRuns(dampHeatRunsData);
-        setEnduranceRuns(enduranceRunsData);
+          dampHeatRunsResult,
+          enduranceRunsResult,
+        ] = settledResults;
+        setInstrument(value(instrumentData, null));
+        setWeighingSequence(value(sequenceData, []));
+        setWeighingReadings(value(weighingReadingsData, []));
+        setZeroTareChecks(value(checksData, []));
+        setZeroTareReadings(value(zeroTareReadingsData, []));
+        setRepeatabilitySeries(value(seriesData, []));
+        setEccentricityReadings(value(eccentricityReadingsData, []));
+        setDiscriminationChecks(value(discriminationChecksData, []));
+        setDiscriminationReadings(value(discriminationReadingsData, []));
+        setSensitivityChecks(value(sensitivityChecksData, []));
+        setSensitivityReadings(value(sensitivityReadingsData, []));
+        setTiltingState(value(tiltingStateData, null));
+        setVoltageVariationsReadings(value(voltageVariationsReadingsData, []));
+        setAcMainsDipsReadings(value(acMainsDipsReadingsData, []));
+        setElectricalBurstsReadings(value(electricalBurstsReadingsData, []));
+        setElectrostaticDischargesReadings(value(electrostaticDischargesReadingsData, []));
+        setSurgesReadings(value(surgesReadingsData, []));
+        setRadiatedEmImmunityReadings(value(radiatedEmImmunityReadingsData, []));
+        setConductedRfImmunityReadings(value(conductedRfImmunityReadingsData, []));
+        setRoadVehicleTransientsReadings(value(roadVehicleTransientsReadingsData, []));
+        setDampHeatRuns(value(dampHeatRunsResult, []));
+        setEnduranceRuns(value(enduranceRunsResult, []));
       })
       .catch((err) => {
         if (!cancelled) {

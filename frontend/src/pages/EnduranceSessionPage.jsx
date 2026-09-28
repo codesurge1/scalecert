@@ -107,11 +107,17 @@ export function EnduranceSessionPage() {
       .then((sessionData) => {
         if (cancelled) return undefined;
         setSession(sessionData);
-        return Promise.all([
-          apiFetch(`/instruments/${sessionData.instrument_id}`),
-          apiFetch(`/sessions/${id}/endurance/sequence`),
-          apiFetch(`/sessions/${id}/endurance/setup`, { method: "POST" }),
-        ]);
+        // POST .../endurance/setup auto-provisions the two fixed runs and
+        // is draft-only (409s otherwise, db/schema.sql's runs_write
+        // policy) — it may only fire while this session is draft. Viewing
+        // a non-draft session (e.g. an approver) uses the read-only
+        // GET .../endurance/runs listing instead, which never creates
+        // anything — see docs/errors/ERROR_LOG.md.
+        const runsFetch =
+          sessionData.status === "draft"
+            ? apiFetch(`/sessions/${id}/endurance/setup`, { method: "POST" })
+            : apiFetch(`/sessions/${id}/endurance/runs`);
+        return Promise.all([apiFetch(`/instruments/${sessionData.instrument_id}`), apiFetch(`/sessions/${id}/endurance/sequence`), runsFetch]);
       })
       .then((results) => {
         if (cancelled || !results) return;
@@ -213,7 +219,14 @@ export function EnduranceSessionPage() {
     );
   }
 
-  const loadingTable = sequence === undefined || runs === undefined || selectedRunId === null || readingRecords === undefined;
+  // `runs` can legitimately settle at [] — a non-draft session viewed
+  // read-only (e.g. by an approver) whose Endurance runs were never
+  // provisioned (the technician never opened this page while it was still
+  // draft) — that's "nothing recorded", not "still loading", so it gets
+  // its own branch below rather than spinning forever waiting for a
+  // `selectedRunId` that will never be set.
+  const loadingTable = sequence === undefined || runs === undefined;
+  const noRunsRecorded = runs?.length === 0;
   const finalRun = runs?.find((run) => run.ordinal === 1);
   const disabled = session.status !== "draft";
 
@@ -244,6 +257,14 @@ export function EnduranceSessionPage() {
             No load sequence could be generated for this instrument.
           </CardContent>
         </Card>
+      ) : noRunsRecorded ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No Endurance runs have been recorded for this session.
+          </CardContent>
+        </Card>
+      ) : selectedRunId === null || readingRecords === undefined ? (
+        <Skeleton className="h-[600px] w-full" />
       ) : (
         <div className="lg:min-h-0 lg:flex-1 lg:overflow-hidden">
           <WeighingFormTable

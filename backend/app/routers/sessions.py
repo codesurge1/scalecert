@@ -660,6 +660,19 @@ def submit_weighing_reading(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/{session_id}/damp-heat/runs", response_model=list[TestRunOut])
+def list_damp_heat_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
+    """Read-only listing of whichever Damp heat runs already exist — unlike
+    setup_damp_heat_runs below, this never creates the fixed a/b/c runs and
+    carries no draft-status requirement (runs_select in db/schema.sql
+    permits the read for creator/approver/admin regardless of session
+    status), so a page viewing a non-draft session can learn which runs
+    exist without tripping the setup endpoint's draft-only 409."""
+    _get_session_or_404(auth.client, session_id)
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.DAMP_HEAT.value)
+    return [run_row_to_out(row) for row in run_rows]
+
+
 @router.post("/{session_id}/damp-heat/setup", response_model=list[TestRunOut])
 def setup_damp_heat_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
     """Idempotent: creates whichever of the three fixed a/b/c runs don't
@@ -852,6 +865,15 @@ def submit_damp_heat_reading(
 # engine.comparison.compute_run_comparison/compute_durability_check
 # (feat/test-runs-conditions) verbatim; no new error-calculation math.
 # ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/endurance/runs", response_model=list[TestRunOut])
+def list_endurance_runs(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[TestRunOut]:
+    """Read-only counterpart to setup_endurance_runs below — same reasoning
+    as list_damp_heat_runs above."""
+    _get_session_or_404(auth.client, session_id)
+    run_rows = runs_repo.list_runs(auth.client, session_id=session_id, test_type=TestType.ENDURANCE.value)
+    return [run_row_to_out(row) for row in run_rows]
 
 
 @router.post("/{session_id}/endurance/setup", response_model=list[TestRunOut])
