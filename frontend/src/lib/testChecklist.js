@@ -58,15 +58,14 @@ export const TEST_ROWS = [
     route: (sessionId) => `/sessions/${sessionId}/sensitivity`,
   },
   // Added feat/disturbance-test-forms — clause 11 and clause 12.x. All
-  // four are N/A for a non-self-indicating instrument: there's no
-  // electronics for a voltage variation or an electrical disturbance to
-  // act on (a mechanical beam balance has no power supply to vary or
-  // disturb). Digital and analog instruments are both electronic, so
-  // both are applicable to all four. Surges (12.3), radiated EM (12.5),
-  // conducted RF (12.6), and road-vehicle transients (12.7) are real
-  // OIML clauses this app has not built yet (docs/architecture.md) — no
-  // row for them here, same "a row with no route has no form" rule every
-  // other not-yet-implemented row already followed before this task.
+  // are N/A for a non-self-indicating instrument: there's no electronics
+  // for a voltage variation or an electrical disturbance to act on (a
+  // mechanical beam balance has no power supply to vary or disturb).
+  // Digital and analog instruments are both electronic, so both are
+  // applicable to all of them. feat/remaining-disturbance-forms added
+  // surges (12.3), radiated EM immunity (12.5), conducted RF immunity
+  // (12.6), and road-vehicle transients (12.7) — completing 12.1-12.7,
+  // every clause-12.x test this app's scope covers.
   {
     key: "voltage_variations",
     label: "Voltage variations",
@@ -98,6 +97,38 @@ export const TEST_ROWS = [
     naReason: (instrument) =>
       instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
     route: (sessionId) => `/sessions/${sessionId}/electrostatic-discharges`,
+  },
+  {
+    key: "surges",
+    label: "Surges",
+    clause: "B.3.3",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/surges`,
+  },
+  {
+    key: "radiated_em_immunity",
+    label: "Immunity to radiated electromagnetic fields",
+    clause: "B.3.5",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/radiated-em-immunity`,
+  },
+  {
+    key: "conducted_rf_immunity",
+    label: "Immunity to conducted radio-frequency fields",
+    clause: "B.3.6",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/conducted-rf-immunity`,
+  },
+  {
+    key: "road_vehicle_transients",
+    label: "Electrical transients on instruments powered from a road vehicle power supply",
+    clause: "B.3.7",
+    naReason: (instrument) =>
+      instrument.indication_type === "non_self_indicating" ? "N/A — no electronic indication to test" : null,
+    route: (sessionId) => `/sessions/${sessionId}/road-vehicle-transients`,
   },
   // Added feat/damp-heat-endurance — clause 13 and clause 15, both
   // re-running the same Weighing procedure across multiple runs

@@ -74,6 +74,13 @@ class TestType(str, Enum):
     # (feat/test-runs-conditions). See db/migrations/006_damp_heat_endurance_test_types.sql.
     DAMP_HEAT = "damp_heat"
     ENDURANCE = "endurance"
+    # Added feat/remaining-disturbance-forms — the last four record-only
+    # clause-12.x tests, completing 12.1-12.7. See
+    # db/migrations/007_remaining_disturbance_test_types.sql.
+    SURGES = "surges"
+    RADIATED_EM_IMMUNITY = "radiated_em_immunity"
+    CONDUCTED_RF_IMMUNITY = "conducted_rf_immunity"
+    ROAD_VEHICLE_TRANSIENTS = "road_vehicle_transients"
 
 
 def _parse_strict_decimal(value: Any) -> Decimal:

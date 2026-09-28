@@ -4,7 +4,9 @@ computation is possible here. The only job is validating a submitted
 `condition_key` against that test's own fixed condition list, read from the
 OIML R 76-2 form for that clause (rendered as images via pdftoppm, the same
 method used for every other form in this app — pages 24/25/29 for
-12.1/12.2/12.4 respectively).
+12.1/12.2/12.4, and (feat/remaining-disturbance-forms) pages 27-28/32-33/34/
+35-36 for 12.3/12.5/12.6/12.7 respectively) — all seven clause-12.x tests
+are now built, completing the record-only category.
 
 Each list reproduces its form's row structure faithfully, with one
 documented simplification apiece (both noted inline and in
@@ -13,7 +15,9 @@ cable/interface slots on the real form (a technician fills in what's
 connected, however many there are) — simplified to 3 fixed slots, since
 "3 predefined slots" is what this app's fixed-condition-list model can
 represent; a session that genuinely needs more than 3 I/O interfaces
-tested records the rest in the free-text Remarks field.
+tested records the rest in the free-text Remarks field. 12.6's own 10
+blank cable/interface rows get the identical treatment, for the identical
+reason.
 """
 
 # 12.1 AC mains voltage dips and short interruptions (R 76-2 page 24) — one
@@ -104,10 +108,200 @@ _ESD_B = [
 ]
 ELECTROSTATIC_DISCHARGES_CONDITIONS = _ESD_A + _ESD_B
 
+# 12.3 Surges (R 76-2 pages 27-28) — part (a) AC mains power supply: three
+# amplitude/connection groups (0.5 kV L->N, 1 kV L->PE, 1 kV N->PE), each
+# with its own baseline then 3 positive + 3 negative surges synchronized at
+# 0/90/180/270 degrees with the AC supply voltage (the form's own
+# "amplitude/apply on x angle x polarity" structure). Part (b) any other
+# kind of power supply: the same three connection groups, but a single
+# fixed amplitude each (no angle synchronization — DC/other supplies have
+# no AC waveform to synchronize with), baseline + positive + negative.
+_SURGES_A_GROUPS = [
+    ("0.5kv_ln", "0.5 kV, L→N"),
+    ("1kv_lpe", "1 kV, L→PE"),
+    ("1kv_npe", "1 kV, N→PE"),
+]
+_SURGES_ANGLES = ["0", "90", "180", "270"]
+_SURGES_A = [
+    row
+    for group_key, group_label in _SURGES_A_GROUPS
+    for row in (
+        [
+            {
+                "condition_key": f"a_{group_key}_baseline",
+                "label": f"(a) {group_label} — without disturbance",
+                "group": "a",
+                "has_fault_check": False,
+            }
+        ]
+        + [
+            {
+                "condition_key": f"a_{group_key}_{angle}_{polarity}",
+                "label": f"(a) {group_label}, {angle}°, {polarity_label}",
+                "group": "a",
+                "has_fault_check": True,
+            }
+            for angle in _SURGES_ANGLES
+            for polarity, polarity_label in (("pos", "positive"), ("neg", "negative"))
+        ]
+    )
+]
+_SURGES_B_GROUPS = [
+    ("ln", "L→N, 0.5 kV"),
+    ("lpe", "L→PE, 1 kV"),
+    ("npe", "N→PE, 1 kV"),
+]
+_SURGES_B = [
+    row
+    for group_key, group_label in _SURGES_B_GROUPS
+    for row in (
+        [
+            {
+                "condition_key": f"b_{group_key}_baseline",
+                "label": f"(b) {group_label} — without disturbance",
+                "group": "b",
+                "has_fault_check": False,
+            }
+        ]
+        + [
+            {
+                "condition_key": f"b_{group_key}_{polarity}",
+                "label": f"(b) {group_label}, {polarity_label}",
+                "group": "b",
+                "has_fault_check": True,
+            }
+            for polarity, polarity_label in (("pos", "positive"), ("neg", "negative"))
+        ]
+    )
+]
+SURGES_CONDITIONS = _SURGES_A + _SURGES_B
+
+# 12.5 Immunity to radiated electromagnetic fields (R 76-2 pages 32-33) —
+# one baseline, then every combination of antenna polarization (vertical/
+# horizontal) x facing the EUT (front/right/left/rear). The form's own
+# "Antenna"/"Frequency range (MHz)" columns are free-text technician
+# entries, not a further standardized condition axis, so they aren't
+# modeled as separate rows here (the frequency-range choice itself is a
+# session-level header field — B.3.6-applicable or not — not a per-row
+# condition; see the frontend's headerExtras).
+_RADIATED_EM_FACINGS = ["front", "right", "left", "rear"]
+_RADIATED_EM_POLARIZATIONS = [("vertical", "Vertical"), ("horizontal", "Horizontal")]
+RADIATED_EM_IMMUNITY_CONDITIONS = [
+    {"condition_key": "baseline", "label": "Without disturbance", "has_fault_check": False},
+] + [
+    {
+        "condition_key": f"{polarization}_{facing}",
+        "label": f"{polarization_label} polarization, facing {facing.capitalize()}",
+        "has_fault_check": True,
+    }
+    for polarization, polarization_label in _RADIATED_EM_POLARIZATIONS
+    for facing in _RADIATED_EM_FACINGS
+]
+
+# 12.6 Immunity to conducted radio-frequency fields (R 76-2 page 34) — 10
+# blank "Cable/Interface" row-pairs on the real form (a technician fills in
+# whichever cable/interface is under test, however many there are);
+# simplified to 3 fixed slots, the exact same convention and reasoning as
+# 12.2(b)'s own I/O-circuits simplification, above. Each slot is a single
+# 0.15-80 MHz sweep: baseline then one reading.
+CONDUCTED_RF_IMMUNITY_CONDITIONS = [
+    row
+    for slot in (1, 2, 3)
+    for row in (
+        {
+            "condition_key": f"slot_{slot}_baseline",
+            "label": f"Cable/interface {slot} — without disturbance",
+            "has_fault_check": False,
+        },
+        {
+            "condition_key": f"slot_{slot}_sweep",
+            "label": f"Cable/interface {slot}, 0.15–80 MHz sweep",
+            "has_fault_check": True,
+        },
+    )
+]
+
+# 12.7 Electrical transients on instruments powered from a road vehicle
+# power supply (R 76-2 pages 35-36) — part (a) conduction along supply
+# lines of external 12 V/24 V batteries: each battery gets its own
+# baseline then the 5 fixed test pulses (2a/2b/3a/3b/4) at that battery's
+# own conducted voltage (the form's own footnote: pulse 2b only applies if
+# the instrument isn't connected via the car's ignition switch — noted in
+# the label itself, since this app's condition-list model has no separate
+# "applicability footnote" field). Part (b) capacitive/inductive coupling
+# via non-supply lines: the form itself already repeats 3 generic "other
+# line" blocks per battery (not simplified from a larger number, unlike
+# 12.2(b)/12.6 above — 3 is what the real form has), each with its own
+# baseline then the 2 fixed pulses (a/b) at that battery's own voltage.
+_RVT_A_PULSES = {
+    "12v": [("2a", "+50 V"), ("2b", "+10 V"), ("3a", "−150 V"), ("3b", "+100 V"), ("4", "−7 V")],
+    "24v": [("2a", "+50 V"), ("2b", "+20 V"), ("3a", "−200 V"), ("3b", "+200 V"), ("4", "−16 V")],
+}
+_RVT_BATTERIES = [("12v", "12 V battery"), ("24v", "24 V battery")]
+_RVT_A = [
+    row
+    for battery, battery_label in _RVT_BATTERIES
+    for row in (
+        [
+            {
+                "condition_key": f"a_{battery}_baseline",
+                "label": f"(a) {battery_label} — without disturbance",
+                "group": "a",
+                "has_fault_check": False,
+            }
+        ]
+        + [
+            {
+                "condition_key": f"a_{battery}_{pulse}",
+                "label": (
+                    f"(a) {battery_label}, test pulse {pulse} ({voltage})"
+                    + (" — only if not connected via the ignition switch" if pulse == "2b" else "")
+                ),
+                "group": "a",
+                "has_fault_check": True,
+            }
+            for pulse, voltage in _RVT_A_PULSES[battery]
+        ]
+    )
+]
+_RVT_B_PULSES = {
+    "12v": [("a", "−60 V"), ("b", "+40 V")],
+    "24v": [("a", "−80 V"), ("b", "+80 V")],
+}
+_RVT_B = [
+    row
+    for battery, battery_label in _RVT_BATTERIES
+    for slot in (1, 2, 3)
+    for row in (
+        [
+            {
+                "condition_key": f"b_{battery}_slot{slot}_baseline",
+                "label": f"(b) {battery_label}, other line {slot} — without disturbance",
+                "group": "b",
+                "has_fault_check": False,
+            }
+        ]
+        + [
+            {
+                "condition_key": f"b_{battery}_slot{slot}_{pulse}",
+                "label": f"(b) {battery_label}, other line {slot}, pulse {pulse} ({voltage})",
+                "group": "b",
+                "has_fault_check": True,
+            }
+            for pulse, voltage in _RVT_B_PULSES[battery]
+        ]
+    )
+]
+ROAD_VEHICLE_TRANSIENTS_CONDITIONS = _RVT_A + _RVT_B
+
 CONDITIONS_BY_TEST_TYPE = {
     "ac_mains_dips": AC_MAINS_DIPS_CONDITIONS,
     "electrical_bursts": ELECTRICAL_BURSTS_CONDITIONS,
     "electrostatic_discharges": ELECTROSTATIC_DISCHARGES_CONDITIONS,
+    "surges": SURGES_CONDITIONS,
+    "radiated_em_immunity": RADIATED_EM_IMMUNITY_CONDITIONS,
+    "conducted_rf_immunity": CONDUCTED_RF_IMMUNITY_CONDITIONS,
+    "road_vehicle_transients": ROAD_VEHICLE_TRANSIENTS_CONDITIONS,
 }
 
 

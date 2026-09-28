@@ -36,7 +36,19 @@ create type test_type as enum (
   -- `ALTER TYPE test_type ADD VALUE` instead of a fresh apply of this
   -- file — see db/migrations/006_damp_heat_endurance_test_types.sql.
   'damp_heat',                  -- B.2    (clause 13 — a/b/c runs, computed via the Weighing engine)
-  'endurance'                   -- A.6    (clause 15 — a/c runs + compute_run_comparison durability check)
+  'endurance',                  -- A.6    (clause 15 — a/c runs + compute_run_comparison durability check)
+  -- Added feat/remaining-disturbance-forms — the last four record-only
+  -- clause-12.x tests, completing 12.1-12.7. Same "no engine, technician's
+  -- bench observation" shape as ac_mains_dips/electrical_bursts/
+  -- electrostatic_discharges (docs/architecture.md). Gated: N/A for
+  -- non-self-indicating instruments, same as every other clause-12.x test.
+  -- For an ALREADY-PROVISIONED project these four values must be added via
+  -- `ALTER TYPE test_type ADD VALUE` instead of a fresh apply of this
+  -- file — see db/migrations/007_remaining_disturbance_test_types.sql.
+  'surges',                     -- B.3.3  (clause 12.3 — record-only)
+  'radiated_em_immunity',       -- B.3.5  (clause 12.5 — record-only)
+  'conducted_rf_immunity',      -- B.3.6  (clause 12.6 — record-only)
+  'road_vehicle_transients'     -- B.3.7  (clause 12.7 — record-only)
 );
 
 -- ============ CORE TABLES ============
