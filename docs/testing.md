@@ -27,6 +27,14 @@ For every accuracy class (I, II, III, IIII) and both `initial`/`subsequent` (sam
 
 ## RLS adversarial tests
 
+## Frontend tests
+
+Added `fix/approver-can-open-tests` — the first frontend test in this repo (`frontend/src/lib/*.test.js`, Vitest, reading `vite.config.js`'s own `test` block — no separate config, so the `@` path alias is shared, not duplicated). Reserved for pure logic that's cheap to isolate from React/routing (e.g. `src/lib/rowOpenable.js`'s `isRowOpenable`) — component rendering isn't covered yet (`environment: 'node'`, no `jsdom`), same "add it when something actually needs it" approach the engine's own test suite took.
+
+```
+cd frontend && npm run test
+```
+
 ## How to run
 
 ```
