@@ -18,6 +18,10 @@ import { VoltageVariationsSessionPage } from "@/pages/VoltageVariationsSessionPa
 import { AcMainsDipsSessionPage } from "@/pages/AcMainsDipsSessionPage";
 import { ElectricalBurstsSessionPage } from "@/pages/ElectricalBurstsSessionPage";
 import { ElectrostaticDischargesSessionPage } from "@/pages/ElectrostaticDischargesSessionPage";
+import { SurgesSessionPage } from "@/pages/SurgesSessionPage";
+import { RadiatedEmImmunitySessionPage } from "@/pages/RadiatedEmImmunitySessionPage";
+import { ConductedRfImmunitySessionPage } from "@/pages/ConductedRfImmunitySessionPage";
+import { RoadVehicleTransientsSessionPage } from "@/pages/RoadVehicleTransientsSessionPage";
 import { DampHeatSessionPage } from "@/pages/DampHeatSessionPage";
 import { EnduranceSessionPage } from "@/pages/EnduranceSessionPage";
 import { SessionsListPage } from "@/pages/SessionsListPage";
@@ -65,17 +69,20 @@ export default function App() {
           <Route path="/sessions/:id/discrimination" element={<DiscriminationSessionPage />} />
           <Route path="/sessions/:id/sensitivity" element={<SensitivitySessionPage />} />
           <Route path="/sessions/:id/tilting" element={<TiltingSessionPage />} />
-          {/* Clause 11 + clause 12.x (feat/disturbance-test-forms) —
-              voltage variations is computed (reuses the Weighing engine);
-              the other three are record-only (no engine — physical EMC
-              equipment required, docs/architecture.md). Surges (12.3),
-              radiated EM (12.5), conducted RF (12.6), and road-vehicle
-              transients (12.7) are NOT built this task — no route for
-              them. */}
+          {/* Clause 11 + clause 12.x — voltage variations is computed
+              (reuses the Weighing engine); every clause-12.x test below is
+              record-only (no engine — physical EMC equipment required,
+              docs/architecture.md). feat/remaining-disturbance-forms
+              completed 12.3/12.5/12.6/12.7, so all seven clause-12.x tests
+              (12.1-12.7) are now live. */}
           <Route path="/sessions/:id/voltage-variations" element={<VoltageVariationsSessionPage />} />
           <Route path="/sessions/:id/ac-mains-dips" element={<AcMainsDipsSessionPage />} />
           <Route path="/sessions/:id/electrical-bursts" element={<ElectricalBurstsSessionPage />} />
           <Route path="/sessions/:id/electrostatic-discharges" element={<ElectrostaticDischargesSessionPage />} />
+          <Route path="/sessions/:id/surges" element={<SurgesSessionPage />} />
+          <Route path="/sessions/:id/radiated-em-immunity" element={<RadiatedEmImmunitySessionPage />} />
+          <Route path="/sessions/:id/conducted-rf-immunity" element={<ConductedRfImmunitySessionPage />} />
+          <Route path="/sessions/:id/road-vehicle-transients" element={<RoadVehicleTransientsSessionPage />} />
           {/* Clause 13 (Damp heat) + clause 15 (Endurance) —
               feat/damp-heat-endurance. Both reuse WeighingFormTable
               verbatim, one run at a time, via the runs/conditions

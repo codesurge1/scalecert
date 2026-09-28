@@ -244,3 +244,95 @@ def test_electrostatic_discharges_conditions_and_submit(monkeypatch):
         json={"condition_key": "a_2kv_pos", "indication": "1000", "significant_fault": False},
     )
     assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# feat/remaining-disturbance-forms — 12.3/12.5/12.6/12.7, completing 12.1-12.7.
+# Same smoke-test-per-test pattern as 12.2/12.4 above: confirm each is wired
+# to its own condition list/test_type through the shared implementation,
+# plus one dedicated test per test for something genuinely test-specific.
+# ---------------------------------------------------------------------------
+
+
+def test_surges_conditions_and_submit(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(readings_repo, "insert_reading", lambda client, **kwargs: {"id": "reading-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_result", lambda client, **kwargs: {"id": "result-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+
+    conditions_resp = client.get("/api/sessions/sess-1/surges/conditions")
+    assert conditions_resp.status_code == 200
+    assert len(conditions_resp.json()) == 36
+
+    resp = client.post(
+        "/api/sessions/sess-1/surges/readings",
+        json={"condition_key": "a_0.5kv_ln_0_pos", "indication": "1000", "significant_fault": False},
+    )
+    assert resp.status_code == 201
+
+
+def test_radiated_em_immunity_conditions_and_submit(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(readings_repo, "insert_reading", lambda client, **kwargs: {"id": "reading-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_result", lambda client, **kwargs: {"id": "result-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+
+    conditions_resp = client.get("/api/sessions/sess-1/radiated-em-immunity/conditions")
+    assert conditions_resp.status_code == 200
+    assert len(conditions_resp.json()) == 9
+
+    resp = client.post(
+        "/api/sessions/sess-1/radiated-em-immunity/readings",
+        json={"condition_key": "vertical_front", "indication": "1000", "significant_fault": False},
+    )
+    assert resp.status_code == 201
+
+
+def test_conducted_rf_immunity_conditions_and_submit(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(readings_repo, "insert_reading", lambda client, **kwargs: {"id": "reading-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_result", lambda client, **kwargs: {"id": "result-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+
+    conditions_resp = client.get("/api/sessions/sess-1/conducted-rf-immunity/conditions")
+    assert conditions_resp.status_code == 200
+    assert len(conditions_resp.json()) == 6
+
+    resp = client.post(
+        "/api/sessions/sess-1/conducted-rf-immunity/readings",
+        json={"condition_key": "slot_1_sweep", "indication": "1000", "significant_fault": False},
+    )
+    assert resp.status_code == 201
+
+
+def test_road_vehicle_transients_conditions_and_submit(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _INSTRUMENT_ROW)
+    monkeypatch.setattr(readings_repo, "insert_reading", lambda client, **kwargs: {"id": "reading-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_result", lambda client, **kwargs: {"id": "result-1", **kwargs})
+    monkeypatch.setattr(readings_repo, "insert_audit_log", lambda client, **kwargs: None)
+
+    conditions_resp = client.get("/api/sessions/sess-1/road-vehicle-transients/conditions")
+    assert conditions_resp.status_code == 200
+    assert len(conditions_resp.json()) == 30
+
+    resp = client.post(
+        "/api/sessions/sess-1/road-vehicle-transients/readings",
+        json={"condition_key": "a_12v_2a", "indication": "1000", "significant_fault": False},
+    )
+    assert resp.status_code == 201
+
+
+def test_road_vehicle_transients_rejects_non_self_indicating_instrument(monkeypatch):
+    monkeypatch.setattr(sessions_repo, "get_session", lambda client, session_id: _DRAFT_SESSION_ROW)
+    monkeypatch.setattr(instruments_repo, "get_instrument", lambda client, instrument_id: _NSI_INSTRUMENT_ROW)
+
+    resp = client.post(
+        "/api/sessions/sess-1/road-vehicle-transients/readings",
+        json={"condition_key": "a_12v_2a", "indication": "1000", "significant_fault": False},
+    )
+    assert resp.status_code == 422
+    assert "electronic" in resp.json()["detail"]

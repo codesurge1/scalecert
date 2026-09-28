@@ -80,6 +80,10 @@ export function SessionPage() {
   const [acMainsDipsReadings, setAcMainsDipsReadings] = useState(undefined);
   const [electricalBurstsReadings, setElectricalBurstsReadings] = useState(undefined);
   const [electrostaticDischargesReadings, setElectrostaticDischargesReadings] = useState(undefined);
+  const [surgesReadings, setSurgesReadings] = useState(undefined);
+  const [radiatedEmImmunityReadings, setRadiatedEmImmunityReadings] = useState(undefined);
+  const [conductedRfImmunityReadings, setConductedRfImmunityReadings] = useState(undefined);
+  const [roadVehicleTransientsReadings, setRoadVehicleTransientsReadings] = useState(undefined);
   // Damp heat/Endurance (feat/damp-heat-endurance) — multi-run tests, so
   // their progress needs the run list first (from the same idempotent
   // POST .../setup the test pages themselves call) before per-run
@@ -118,6 +122,10 @@ export function SessionPage() {
           apiFetch(`/sessions/${id}/ac-mains-dips/readings`),
           apiFetch(`/sessions/${id}/electrical-bursts/readings`),
           apiFetch(`/sessions/${id}/electrostatic-discharges/readings`),
+          apiFetch(`/sessions/${id}/surges/readings`),
+          apiFetch(`/sessions/${id}/radiated-em-immunity/readings`),
+          apiFetch(`/sessions/${id}/conducted-rf-immunity/readings`),
+          apiFetch(`/sessions/${id}/road-vehicle-transients/readings`),
           // Idempotent (a no-op once the fixed runs already exist) — the
           // same setup call the test pages themselves make; here it's
           // just how the overview learns which run ids to sum readings
@@ -145,6 +153,10 @@ export function SessionPage() {
           acMainsDipsReadingsData,
           electricalBurstsReadingsData,
           electrostaticDischargesReadingsData,
+          surgesReadingsData,
+          radiatedEmImmunityReadingsData,
+          conductedRfImmunityReadingsData,
+          roadVehicleTransientsReadingsData,
           dampHeatRunsData,
           enduranceRunsData,
         ] = results;
@@ -164,6 +176,10 @@ export function SessionPage() {
         setAcMainsDipsReadings(acMainsDipsReadingsData);
         setElectricalBurstsReadings(electricalBurstsReadingsData);
         setElectrostaticDischargesReadings(electrostaticDischargesReadingsData);
+        setSurgesReadings(surgesReadingsData);
+        setRadiatedEmImmunityReadings(radiatedEmImmunityReadingsData);
+        setConductedRfImmunityReadings(conductedRfImmunityReadingsData);
+        setRoadVehicleTransientsReadings(roadVehicleTransientsReadingsData);
         setDampHeatRuns(dampHeatRunsData);
         setEnduranceRuns(enduranceRunsData);
       })
@@ -299,6 +315,41 @@ export function SessionPage() {
     );
   }, [electrostaticDischargesReadings]);
 
+  // feat/remaining-disturbance-forms — same fixed-total convention as the
+  // three disturbance tests above; totals match each test's own condition
+  // list length in app/services/disturbance.py (never instrument-dependent).
+  const surgesProgress = useMemo(() => {
+    const total = surgesReadings ? 36 : undefined; // 27 (a) + 9 (b)
+    return computeProgress(total, surgesReadings?.length ?? 0, surgesReadings?.every((r) => r.passed));
+  }, [surgesReadings]);
+
+  const radiatedEmImmunityProgress = useMemo(() => {
+    const total = radiatedEmImmunityReadings ? 9 : undefined; // 1 baseline + 2 polarizations x 4 facings
+    return computeProgress(
+      total,
+      radiatedEmImmunityReadings?.length ?? 0,
+      radiatedEmImmunityReadings?.every((r) => r.passed),
+    );
+  }, [radiatedEmImmunityReadings]);
+
+  const conductedRfImmunityProgress = useMemo(() => {
+    const total = conductedRfImmunityReadings ? 6 : undefined; // 3 slots x (baseline + sweep)
+    return computeProgress(
+      total,
+      conductedRfImmunityReadings?.length ?? 0,
+      conductedRfImmunityReadings?.every((r) => r.passed),
+    );
+  }, [conductedRfImmunityReadings]);
+
+  const roadVehicleTransientsProgress = useMemo(() => {
+    const total = roadVehicleTransientsReadings ? 30 : undefined; // 12 (a) + 18 (b, 3 slots x 2 batteries)
+    return computeProgress(
+      total,
+      roadVehicleTransientsReadings?.length ?? 0,
+      roadVehicleTransientsReadings?.every((r) => r.passed),
+    );
+  }, [roadVehicleTransientsReadings]);
+
   // Damp heat (3 runs) / Endurance (2 runs) — both reuse the exact same
   // Weighing load sequence (feat/damp-heat-endurance), so `total` is that
   // sequence's own length x2 directions x however many runs this test has.
@@ -324,6 +375,10 @@ export function SessionPage() {
     ac_mains_dips: acMainsDipsProgress,
     electrical_bursts: electricalBurstsProgress,
     electrostatic_discharges: electrostaticDischargesProgress,
+    surges: surgesProgress,
+    radiated_em_immunity: radiatedEmImmunityProgress,
+    conducted_rf_immunity: conductedRfImmunityProgress,
+    road_vehicle_transients: roadVehicleTransientsProgress,
     damp_heat: dampHeatProgress,
     endurance: enduranceProgress,
   };

@@ -1772,17 +1772,17 @@ def submit_voltage_variations_reading(
 
 # ---------------------------------------------------------------------------
 # Record-only electrical disturbance tests (clause 12.x) — AC mains voltage
-# dips (12.1), electrical bursts (12.2), electrostatic discharges (12.4).
-# No computation (see app/contracts/disturbance.py's module docstring): a
-# submission just validates its condition_key against that test's own
-# fixed, predefined list (app/services/disturbance.py) and stores the
-# technician's observation. The three route trios below share one
-# implementation each (`_get_disturbance_conditions`/`_list_disturbance_
-# readings`/`_submit_disturbance_reading`) rather than three near-identical
+# dips (12.1), electrical bursts (12.2), electrostatic discharges (12.4),
+# and (feat/remaining-disturbance-forms) surges (12.3), radiated EM
+# immunity (12.5), conducted RF immunity (12.6), road-vehicle transients
+# (12.7) — all seven clause-12.x tests, completing the record-only
+# category. No computation (see app/contracts/disturbance.py's module
+# docstring): a submission just validates its condition_key against that
+# test's own fixed, predefined list (app/services/disturbance.py) and
+# stores the technician's observation. All seven route trios below share
+# one implementation each (`_disturbance_conditions`/`_list_disturbance_
+# readings`/`_submit_disturbance_reading`) rather than seven near-identical
 # copies — only the registered path and the fixed `test_type` differ.
-# Surges (12.3), radiated EM (12.5), conducted RF (12.6), and road-vehicle
-# transients (12.7) are NOT built this task — see docs/architecture.md and
-# SESSION_LOG.md for what was deferred and why.
 # ---------------------------------------------------------------------------
 
 
@@ -1961,6 +1961,113 @@ def submit_electrostatic_discharges_reading(
 ) -> DisturbanceResultOut:
     return _submit_disturbance_reading(
         session_id, TestType.ELECTROSTATIC_DISCHARGES.value, "electrostatic_discharges_reading_submitted", payload, auth
+    )
+
+
+# --- 12.3 Surges -------------------------------------------------------------
+
+
+@router.get("/{session_id}/surges/conditions", response_model=list[DisturbanceConditionOut])
+def get_surges_conditions(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.SURGES.value)
+
+
+@router.get("/{session_id}/surges/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_surges_readings(session_id: str, auth: AuthContext = Depends(get_auth_context)) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.SURGES.value)
+
+
+@router.post("/{session_id}/surges/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_surges_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(session_id, TestType.SURGES.value, "surges_reading_submitted", payload, auth)
+
+
+# --- 12.5 Immunity to radiated electromagnetic fields -------------------------
+
+
+@router.get("/{session_id}/radiated-em-immunity/conditions", response_model=list[DisturbanceConditionOut])
+def get_radiated_em_immunity_conditions(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.RADIATED_EM_IMMUNITY.value)
+
+
+@router.get("/{session_id}/radiated-em-immunity/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_radiated_em_immunity_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.RADIATED_EM_IMMUNITY.value)
+
+
+@router.post("/{session_id}/radiated-em-immunity/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_radiated_em_immunity_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(
+        session_id, TestType.RADIATED_EM_IMMUNITY.value, "radiated_em_immunity_reading_submitted", payload, auth
+    )
+
+
+# --- 12.6 Immunity to conducted radio-frequency fields -------------------------
+
+
+@router.get("/{session_id}/conducted-rf-immunity/conditions", response_model=list[DisturbanceConditionOut])
+def get_conducted_rf_immunity_conditions(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.CONDUCTED_RF_IMMUNITY.value)
+
+
+@router.get("/{session_id}/conducted-rf-immunity/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_conducted_rf_immunity_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.CONDUCTED_RF_IMMUNITY.value)
+
+
+@router.post("/{session_id}/conducted-rf-immunity/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_conducted_rf_immunity_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(
+        session_id, TestType.CONDUCTED_RF_IMMUNITY.value, "conducted_rf_immunity_reading_submitted", payload, auth
+    )
+
+
+# --- 12.7 Electrical transients on instruments powered from a road vehicle ---
+# --- power supply --------------------------------------------------------------
+
+
+@router.get("/{session_id}/road-vehicle-transients/conditions", response_model=list[DisturbanceConditionOut])
+def get_road_vehicle_transients_conditions(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceConditionOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _disturbance_conditions(TestType.ROAD_VEHICLE_TRANSIENTS.value)
+
+
+@router.get("/{session_id}/road-vehicle-transients/readings", response_model=list[DisturbanceReadingRecordOut])
+def list_road_vehicle_transients_readings(
+    session_id: str, auth: AuthContext = Depends(get_auth_context)
+) -> list[DisturbanceReadingRecordOut]:
+    _get_session_or_404(auth.client, session_id)  # visibility check only
+    return _list_disturbance_readings(auth.client, session_id, TestType.ROAD_VEHICLE_TRANSIENTS.value)
+
+
+@router.post("/{session_id}/road-vehicle-transients/readings", response_model=DisturbanceResultOut, status_code=201)
+def submit_road_vehicle_transients_reading(
+    session_id: str, payload: DisturbanceReadingSubmitIn, auth: AuthContext = Depends(get_auth_context)
+) -> DisturbanceResultOut:
+    return _submit_disturbance_reading(
+        session_id, TestType.ROAD_VEHICLE_TRANSIENTS.value, "road_vehicle_transients_reading_submitted", payload, auth
     )
 
 

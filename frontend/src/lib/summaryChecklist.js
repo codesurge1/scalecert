@@ -83,9 +83,12 @@ export const SUMMARY_ROWS = [
   {
     number: "12.3",
     label: "Surges",
+    // Added feat/remaining-disturbance-forms. Both sub-rows open the SAME
+    // test/route — one combined form for (a) and (b), same convention
+    // 12.2/12.4 already established.
     subRows: [
-      { label: "a) AC mains power supply", placeholder: true },
-      { label: "b) Any other kind of power supply lines", placeholder: true },
+      { label: "a) AC mains power supply", testKey: "surges" },
+      { label: "b) Any other kind of power supply lines", testKey: "surges" },
     ],
   },
   {
@@ -97,14 +100,16 @@ export const SUMMARY_ROWS = [
       { label: "b) Indirect application (contact discharges only)", testKey: "electrostatic_discharges" },
     ],
   },
-  { number: "12.5", label: "Immunity to radiated electromagnetic fields", placeholder: true },
-  { number: "12.6", label: "Immunity to conducted radio-frequency fields", placeholder: true },
+  { number: "12.5", label: "Immunity to radiated electromagnetic fields", testKey: "radiated_em_immunity" },
+  { number: "12.6", label: "Immunity to conducted radio-frequency fields", testKey: "conducted_rf_immunity" },
   {
     number: "12.7",
     label: "Electrical transients on instruments powered from a road vehicle power supply",
+    // Added feat/remaining-disturbance-forms. Same "one combined form for
+    // both sub-rows" convention as 12.2/12.3/12.4.
     subRows: [
-      { label: "a) Conduction along supply lines of external 12 V and 24 V batteries", placeholder: true },
-      { label: "b) Capacitive and inductive coupling via lines other than supply lines", placeholder: true },
+      { label: "a) Conduction along supply lines of external 12 V and 24 V batteries", testKey: "road_vehicle_transients" },
+      { label: "b) Capacitive and inductive coupling via lines other than supply lines", testKey: "road_vehicle_transients" },
     ],
   },
   {
