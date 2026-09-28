@@ -1,9 +1,10 @@
 import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { FormCheckbox, FormLine } from "@/components/oiml/FormPrimitives";
 import { TEST_ROWS } from "@/lib/testChecklist";
 import { SUMMARY_ROWS } from "@/lib/summaryChecklist";
+import { isRowOpenable } from "@/lib/rowOpenable";
 
 const TEST_ROWS_BY_KEY = Object.fromEntries(TEST_ROWS.map((row) => [row.key, row]));
 
@@ -11,12 +12,23 @@ function fmt(value) {
   return value === undefined || value === null || value === "" ? "" : value;
 }
 
-// A leaf row's clickable label — implemented + applicable (regardless of
-// not-started/in-progress/complete, per docs/architecture.md's "no forced
-// sequence" rule) is the ONLY clickable state; N/A and not-implemented are
-// plain text. `naReason` mirrors the exact same instrument-driven check
-// `SessionPage`/`AddTestDialog` already use (`row.naReason(instrument)`),
-// not a new rule.
+// The visible "this row opens something" affordance (fix/approver-can-open-
+// tests) — a small bordered chip, deliberately NOT serif/form-styled like
+// the rest of this table, so it reads unmistakably as a UI control rather
+// than printed form content. Previously the only signal was the label's
+// own text color (`text-primary`) with an underline that only appeared on
+// hover — easy to miss entirely in a dense ~40-row form-styled table,
+// which was the actual bug: nothing was gating these rows (see
+// `isRowOpenable` above), the affordance was just too subtle to notice.
+function OpenChip() {
+  return (
+    <span className="ml-2 inline-flex shrink-0 items-center gap-0.5 rounded border border-primary/40 bg-primary/5 px-1.5 py-0.5 font-sans text-[10px] font-semibold uppercase tracking-wide text-primary group-hover:bg-primary/15">
+      Open
+      <span aria-hidden="true">&rarr;</span>
+    </span>
+  );
+}
+
 function RowLabel({ sub, instrument, sessionId }) {
   if (sub.placeholder) {
     return <span className="text-neutral-400">{sub.label}</span>;
@@ -27,9 +39,12 @@ function RowLabel({ sub, instrument, sessionId }) {
     return <span className="text-neutral-500">{sub.label}</span>;
   }
   return (
-    <Link to={testRow.route(sessionId)} className="text-primary hover:underline">
-      {sub.label}
-      {sub.appAddition ? <span className="ml-1.5 text-[10px] italic text-neutral-500">(app addition — A.4.4 variant, not on the printed form)</span> : null}
+    <Link to={testRow.route(sessionId)} className="inline-flex items-center text-primary hover:underline">
+      <span>
+        {sub.label}
+        {sub.appAddition ? <span className="ml-1.5 text-[10px] italic text-neutral-500">(app addition — A.4.4 variant, not on the printed form)</span> : null}
+      </span>
+      <OpenChip />
     </Link>
   );
 }
@@ -94,6 +109,7 @@ function StatusCells({ sub, instrument, progressByKey }) {
 }
 
 function SummaryRowGroup({ group, instrument, progressByKey, sessionId }) {
+  const navigate = useNavigate();
   if (group.sectionHeader) {
     return (
       <tr className="bg-neutral-100">
@@ -114,8 +130,33 @@ function SummaryRowGroup({ group, instrument, progressByKey, sessionId }) {
 
   return (
     <>
-      {subRows.map((sub, subIdx) => (
-        <tr key={subIdx} className={cn(sub.appAddition && "bg-amber-50/60")}>
+      {subRows.map((sub, subIdx) => {
+        const openable = isRowOpenable(sub, instrument);
+        const testRow = openable ? TEST_ROWS_BY_KEY[sub.testKey] : null;
+        return (
+        <tr
+          key={subIdx}
+          className={cn(
+            sub.appAddition && "bg-amber-50/60",
+            // `group` drives OpenChip's hover state above; the whole row —
+            // not just the label text — is clickable and visibly so, per
+            // fix/approver-can-open-tests: a viewer scanning this dense,
+            // form-styled table should never have to hunt for a single
+            // colored word to find the one thing they can click.
+            openable && "group cursor-pointer hover:bg-primary/5",
+          )}
+          onClick={
+            openable
+              ? (event) => {
+                  // Skip when the click already landed on the real <a> (its
+                  // own handler already navigates) — avoids a redundant
+                  // double-navigation to the same route.
+                  if (event.target.closest("a")) return;
+                  navigate(testRow.route(sessionId));
+                }
+              : undefined
+          }
+        >
           {subIdx === 0 ? (
             <td
               rowSpan={subRows.length}
@@ -142,7 +183,8 @@ function SummaryRowGroup({ group, instrument, progressByKey, sessionId }) {
           )}
           <StatusCells sub={sub} instrument={instrument} progressByKey={progressByKey} />
         </tr>
-      ))}
+        );
+      })}
     </>
   );
 }
@@ -158,10 +200,14 @@ function SummaryRowGroup({ group, instrument, progressByKey, sessionId }) {
  * text beyond the form's own row labels and structural chrome.
  *
  * Every leaf row is one of exactly three states (see `summaryChecklist.js`
- * for the full reasoning): an implemented, applicable test (clickable,
- * live PASSED/FAILED ticks driven by the SAME `progressByKey` shape
- * `SessionPage` has always computed via `computeProgress` — no new
- * status logic here, just a different table to render it into); N/A (the
+ * for the full reasoning): an implemented, applicable test (openable —
+ * `isRowOpenable`, below — by ANY viewer at ANY session status, with a
+ * visible "Open" chip and a clickable, hover-highlighted row so the
+ * affordance is unmistakable, not just a colored word buried in a dense
+ * form-styled table — fix/approver-can-open-tests; live PASSED/FAILED
+ * ticks driven by the SAME `progressByKey` shape `SessionPage` has always
+ * computed via `computeProgress` — no new status logic here, just a
+ * different table to render it into); N/A (the
  * form's own "– –" convention, driven by the exact same
  * `TEST_ROWS[*].naReason(instrument)` check `SessionPage`/`AddTestDialog`
  * already use); or not-implemented (a real OIML clause this app has never
@@ -232,11 +278,13 @@ export function SessionSummaryTable({ sessionId, instrument, progressByKey }) {
 
       <p className="mt-3 text-xs text-muted-foreground">
         Reproduced for data-entry fidelity to OIML R 76-2's page-9 "Summary of type evaluation" form — not a copy
-        of the copyrighted OIML document itself. Only the seven clause 8.3.3 items this app implements
-        (Weighing/Zero-tare, Repeatability, Eccentricity, Discrimination, Sensitivity, Tilting) carry live status;
-        every other line is a real OIML clause this app has not built — greyed and marked "Not implemented," never
-        "Not started." The bottom Remarks field is local to this page only, same known gap as every other OIML
-        form here (no session-update endpoint yet — docs/architecture.md).
+        of the copyrighted OIML document itself. Every implemented, applicable test ("Open" — see above) carries
+        live status and can be opened by anyone who can view this session, at any session status — draft,
+        submitted, returned, approved, or issued alike; a session's status controls whether an opened test's data
+        can still be edited, never whether it can be seen. Every other line is a real OIML clause this app has not
+        built — greyed and marked "Not implemented," never "Not started." The bottom Remarks field is local to
+        this page only, same known gap as every other OIML form here (no session-update endpoint yet —
+        docs/architecture.md).
       </p>
     </div>
   );
