@@ -28,13 +28,21 @@ function DialogOverlay({ className, ...props }) {
   );
 }
 
+// `max-h-[calc(100dvh-2rem)] overflow-y-auto` (fix/add-test-dialog-scroll):
+// the dialog is viewport-centered with `fixed` + translate, and Radix locks
+// page scroll while it's open — so without a height cap, content taller
+// than the viewport spills off BOTH edges with no way to scroll to it (the
+// Add test list hit this once the checklist grew to 17 rows). Capped at the
+// viewport minus a 1rem margin each side, the dialog itself scrolls
+// instead. A dialog that wants a pinned header can switch to `flex
+// flex-col` and give its body `min-h-0 overflow-y-auto` (AddTestDialog).
 function DialogContent({ className, children, ...props }) {
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border bg-background p-6 shadow-lg",
+          "fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-lg border bg-background p-6 shadow-lg",
           className,
         )}
         {...props}
