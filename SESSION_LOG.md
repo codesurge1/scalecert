@@ -918,3 +918,23 @@ Scope held: no new tests, engines, or endpoints — every un-built clause is a d
 - `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task, unchanged by this one.
 - Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do, unchanged by this task.
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided), unchanged by this task.
+
+---
+
+### [2026-09-29] — fix: "Add test" dialog scrolls
+
+**Done.** Fixed "I'm not able to scroll on select / add test". The Add test dialog had grown to 17 rows and, being a fixed, viewport-centred element with no height limit, overflowed off both the top and bottom of the screen. The page behind it is scroll-locked, so those rows were unreachable. The full write-up is in `docs/errors/ERROR_LOG.md` (2026-09-29).
+
+- The shared `DialogContent` is now capped at the viewport height and scrolls internally, which covers every dialog.
+- `AddTestDialog` pins its title and close button and scrolls only the list.
+
+This work is on its own branch, `fix/add-test-dialog-scroll`, off `main`. It's independent of the light/dark theme work on `claude/tender-allen-hx2gca`.
+
+**Testing.**
+- Reproduced first in Playwright against a mocked production build at 1366×680: the dialog spanned y=−96 to 776, nothing scrolled, and clicking the last row timed out.
+- After the fix, at 1366×680, 390×640 and 1920×1080: the dialog stays inside the viewport, the title and close button stay visible, a wheel scroll reaches the last row, and clicking it opens Endurance.
+- `npm run build` succeeds. `npm run lint` exits 0 with the same 35 existing warnings. `npm run test` shows 7 passed. There are no backend changes.
+
+**Next:** Check the preview on a real laptop and phone: open Add test on a session, scroll to Endurance and open it. Also check that the other dialogs (Start verification, Return with reason, public "Report a discrepancy") look unchanged at normal heights.
+
+**Open questions:** None new. Carried over, unchanged: no CI workflow yet; `GET /api/sessions` (role-scoped); read endpoints for `discrepancy_reports`/`audit_log`; admin role-promotion UI vs. seed-script-only.

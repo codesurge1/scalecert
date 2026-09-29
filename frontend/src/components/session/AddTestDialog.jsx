@@ -50,13 +50,17 @@ export function AddTestDialog({ sessionId, instrument }) {
       <DialogTrigger asChild>
         <Button size="sm">Add test</Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
+      {/* flex column + a `min-h-0 overflow-y-auto` list: the dialog is
+          already capped at the viewport height (ui/dialog.jsx), and this
+          makes only the test list scroll inside that cap — title and close
+          button stay pinned — instead of the whole dialog scrolling. */}
+      <DialogContent className="flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Add a test</DialogTitle>
           <DialogDescription>The OIML clause 8.3.3 verification checklist.</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-1.5">
+        <div className="-mx-1 grid min-h-0 gap-1.5 overflow-y-auto overscroll-contain px-1 pb-1">
           {TEST_ROWS.map((row) => {
             const naReason = instrument && row.naReason ? row.naReason(instrument) : null;
             const selectable = isSelectable(row, instrument);
