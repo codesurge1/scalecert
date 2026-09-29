@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScaleCert</title>
+    <!-- Apply the saved light/dark theme before first paint, so a dark-mode
+         user never sees a white flash while the bundle loads. Mirrors
+         src/lib/theme.js (THEME_STORAGE_KEY, resolveTheme) — keep in sync.
+         src/hooks/useTheme.js takes over once the app has loaded. -->
+    <script>
+      (function () {
+        var pref = "system";
+        try {
+          pref = localStorage.getItem("scalecert-theme") || "system";
+        } catch (e) {}
+        var dark =
+          pref === "dark" ||
+          (pref !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

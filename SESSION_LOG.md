@@ -918,3 +918,34 @@ Scope held: no new tests, engines, or endpoints — every un-built clause is a d
 - `GET /api/sessions` (role-scoped) is the clean fix for `useAllSessions.js`'s O(instruments) composition — backend work for a later task, unchanged by this one.
 - Read endpoints for `discrepancy_reports` (admin-only per CLAUDE.md) and `audit_log` don't exist yet — both sidebar items are placeholders until they do, unchanged by this task.
 - Admin role-promotion UI vs. seed-script-only (see ADR when decided), unchanged by this task.
+
+---
+
+### [2026-09-29] — feat: light/dark theme
+
+**Done.** Added a full light/dark theme with three preferences: Light, Dark, and System (the default, which follows the OS). Full design is in `docs/architecture.md` (Frontend → Light/dark theme); the key decision is ADR-0012.
+
+- **Theme state.** Pure logic lives in `src/lib/theme.js`. `src/hooks/useTheme.js` is a module-level store read with `useSyncExternalStore`: no provider, so login, public `/verify` and the Toaster share it. It saves to localStorage on a best-effort basis, follows OS changes while on System, and syncs across tabs. An inline script in `index.html` applies the theme before first paint, so there's no white flash. `dark:` now follows the `.dark` class instead of the media query, so an explicit choice beats the OS.
+- **Toggle.** `ThemeToggle` cycles light → dark → system. It sits in the sidebar footer (labelled), the `FocusedShell` header, and the top-right of the login and verify pages.
+- **Tokens.** Added a `.dark` block in `src/index.css`, plus new `--sidebar`/`--sidebar-foreground` chrome tokens. They equal primary in light mode, so light mode is unchanged. They let dark mode lighten `--primary` for readable links and buttons while keeping the sidebar deep blue.
+- **Printed-form tables.** About 500 raw palette classes across about 20 files were not rewritten. Tailwind v4 compiles them to `var(--color-…)`, so `.dark` remaps just the palette variables they use (ADR-0012).
+- **Toaster.** Now follows the resolved theme instead of being pinned to light.
+
+**Testing.**
+- `src/lib/theme.test.js` adds 7 Vitest tests; `npm run test` now reports 14 passed.
+- `npm run build` succeeds (2083 modules).
+- `npm run lint` exits 0 with the same 35 existing warnings and none new.
+- No backend or engine changes, so pytest was not re-run.
+- Visual check: a production build served locally with a fake Supabase session and mocked `/api` responses (real load sequence and results from `engine/`), screenshotted in Playwright in light and dark. Screens checked: login, dashboard, session overview (summary table), Weighing entry and public verify. All read correctly in both themes. Light mode is visually identical to before, and the toggle flips the class and persists the choice.
+- One unrelated finding: the overview crashes if `GET .../tilting/readings` ever returns an array, because it expects `{readings, passed}`. The real API returns the object, so this only showed up with a naive mock.
+
+**Next:** The real verdict is the preview.
+- Toggle each theme on the dashboard, instruments list, session overview, and a few test-entry pages (Weighing with an active cell, Damp heat/Endurance run tabs, a disturbance table, Discrimination).
+- Confirm pass/fail colours, the amber active row and cell, and red error cells read clearly in dark.
+- Confirm a reload keeps the choice with no flash, and that System follows an OS theme change live.
+- Confirm the public verify page and toasts follow the theme.
+
+**Open questions:**
+- Any raw palette class newly added to a form table needs a matching remap line in `src/index.css`'s `.dark` block, or it will stay light in dark mode (ADR-0012). If raw palette usage spreads beyond the form tables, migrate to semantic form tokens instead.
+- Generated PDF certificates are unaffected by design and always print light.
+- Carried over, unchanged: no CI workflow yet; `GET /api/sessions` (role-scoped); read endpoints for `discrepancy_reports`/`audit_log`; admin role-promotion UI vs. seed-script-only.

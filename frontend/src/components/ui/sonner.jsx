@@ -1,11 +1,13 @@
 import { Toaster as SonnerToaster } from "sonner";
+import { useTheme } from "@/hooks/useTheme";
 
 // Simplified from shadcn's sonner.tsx: no next-themes here (not a Next app),
-// so it's pinned to the light theme this design system uses throughout.
+// so it follows this app's own theme store (hooks/useTheme.js) instead.
 function Toaster(props) {
+  const { resolved } = useTheme();
   return (
     <SonnerToaster
-      theme="light"
+      theme={resolved}
       className="toaster group"
       toastOptions={{
         classNames: {

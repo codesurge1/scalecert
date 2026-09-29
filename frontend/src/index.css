@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* `dark:` follows the `.dark` class on <html> (set by hooks/useTheme.js and
+   index.html's pre-paint script), not the raw OS media query — so an
+   explicit Light/Dark choice wins over the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /*
  * ScaleCert design tokens — gov-grade institutional.
  *
@@ -10,8 +15,8 @@
  * - Neutrals are slate-based (cool gray), not warm gray — reads as clinical
  *   and calm rather than friendly.
  * - Radius is small (6px) — closer to a form/document than a consumer app.
- * - No dark mode yet: a single, deliberately legible light theme. Adding a
- *   `.dark` variant later only means adding a second block here.
+ * - Dark mode is a second token block (`.dark` below), plus a remap of the
+ *   raw palette colors the printed-form tables use — see the comment there.
  * - Typography is Tailwind's default system sans stack (no external font
  *   fetch) — clean and legible without adding a network dependency.
  */
@@ -55,6 +60,90 @@
   --border: oklch(0.9 0.008 250);
   --input: oklch(0.9 0.008 250);
   --ring: oklch(0.32 0.06 255 / 0.5);
+
+  /* App chrome (sidebar, top bars). Same as primary in light mode; split
+     out so dark mode can lighten primary (links, buttons) without also
+     turning the sidebar into a bright slab. */
+  --sidebar: oklch(0.32 0.06 255);
+  --sidebar-foreground: oklch(0.98 0.003 247);
+}
+
+/*
+ * Dark theme — same roles, same restraint: deep slate surfaces (not pure
+ * black), primary lifted to a lighter slate-blue so links and buttons keep
+ * contrast on dark surfaces, status colors lightened for the same reason.
+ */
+.dark {
+  --background: oklch(0.17 0.015 256);
+  --foreground: oklch(0.93 0.006 250);
+
+  --card: oklch(0.205 0.018 256);
+  --card-foreground: oklch(0.93 0.006 250);
+
+  --popover: oklch(0.205 0.018 256);
+  --popover-foreground: oklch(0.93 0.006 250);
+
+  --primary: oklch(0.76 0.08 255);
+  --primary-foreground: oklch(0.17 0.02 256);
+
+  --secondary: oklch(0.27 0.02 256);
+  --secondary-foreground: oklch(0.93 0.006 250);
+
+  --muted: oklch(0.24 0.016 256);
+  --muted-foreground: oklch(0.7 0.015 253);
+
+  --accent: oklch(0.29 0.025 256);
+  --accent-foreground: oklch(0.95 0.006 250);
+
+  --destructive: oklch(0.64 0.19 25);
+  --destructive-foreground: oklch(0.98 0.003 247);
+
+  --success: oklch(0.7 0.14 152);
+  --success-foreground: oklch(0.17 0.03 152);
+
+  --warning: oklch(0.78 0.14 75);
+  --warning-foreground: oklch(0.2 0.02 75);
+
+  --border: oklch(0.32 0.018 256);
+  --input: oklch(0.36 0.018 256);
+  --ring: oklch(0.76 0.08 255 / 0.5);
+
+  --sidebar: oklch(0.21 0.035 257);
+  --sidebar-foreground: oklch(0.95 0.005 250);
+
+  /*
+   * Printed-form palette remap. The OIML form tables (WeighingFormTable,
+   * SessionSummaryTable, the disturbance/eccentricity/… tables,
+   * FormPrimitives) deliberately use raw palette classes — `bg-white`,
+   * `border-neutral-900`, `text-neutral-600`, `bg-red-50`, `text-emerald-700`
+   * — to look like the black-on-white paper form, ~500 uses across ~20
+   * files. Tailwind v4 compiles each of those to `var(--color-…)`, so
+   * redefining the variables here flips every one of them at once: paper
+   * becomes a dark sheet, ink becomes light. The neutral scale is inverted
+   * (900 "ink" ↔ light, 50 "paper tint" ↔ dark); tinted backgrounds
+   * (red/amber-50) become dark tints and text shades (emerald/red-700)
+   * become lighter shades that keep their meaning. `black` is NOT remapped
+   * (it's only used for modal backdrops, which should stay dark), nor is
+   * `slate` (VerifyPage already pairs it with explicit `dark:` variants).
+   * In new code, prefer the semantic tokens above; add a line here only
+   * when a new raw palette class is introduced into a form table.
+   */
+  --color-white: oklch(0.205 0.018 256);
+  --color-neutral-50: oklch(0.235 0.016 256);
+  --color-neutral-100: oklch(0.27 0.016 256);
+  --color-neutral-400: oklch(0.52 0.012 256);
+  --color-neutral-500: oklch(0.6 0.012 256);
+  --color-neutral-600: oklch(0.72 0.01 256);
+  --color-neutral-700: oklch(0.78 0.008 256);
+  --color-neutral-800: oklch(0.82 0.007 256);
+  --color-neutral-900: oklch(0.86 0.006 256);
+  --color-red-50: oklch(0.27 0.06 25);
+  --color-red-700: oklch(0.74 0.15 25);
+  --color-emerald-600: oklch(0.74 0.14 160);
+  --color-emerald-700: oklch(0.76 0.13 160);
+  --color-amber-50: oklch(0.29 0.05 75);
+  --color-amber-200: oklch(0.42 0.09 75);
+  --color-amber-500: oklch(0.78 0.15 75);
 }
 
 @theme inline {
@@ -96,6 +185,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
 }
 
 @layer base {

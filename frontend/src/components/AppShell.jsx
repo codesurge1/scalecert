@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /**
  * The sidebar's nav list + pinned identity/logout footer — shared between
@@ -21,16 +22,16 @@ function SidebarContent({ profile, session, onNavigate, onLogout }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-primary-foreground/10 px-4 py-4">
+      <div className="border-b border-sidebar-foreground/10 px-4 py-4">
         <span className="text-sm font-semibold tracking-wide">ScaleCert</span>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
         {items === null ? (
           <>
-            <Skeleton className="h-9 w-full bg-primary-foreground/10" />
-            <Skeleton className="h-9 w-full bg-primary-foreground/10" />
-            <Skeleton className="h-9 w-full bg-primary-foreground/10" />
+            <Skeleton className="h-9 w-full bg-sidebar-foreground/10" />
+            <Skeleton className="h-9 w-full bg-sidebar-foreground/10" />
+            <Skeleton className="h-9 w-full bg-sidebar-foreground/10" />
           </>
         ) : (
           items.map((item) => (
@@ -43,8 +44,8 @@ function SidebarContent({ profile, session, onNavigate, onLogout }) {
                 cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   isActive
-                    ? "bg-primary-foreground/15 text-primary-foreground"
-                    : "text-primary-foreground/80 hover:bg-primary-foreground/10 hover:text-primary-foreground",
+                    ? "bg-sidebar-foreground/15 text-sidebar-foreground"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground",
                 )
               }
             >
@@ -57,12 +58,12 @@ function SidebarContent({ profile, session, onNavigate, onLogout }) {
 
       {/* Pinned bottom: identity, role badge, log out — never scrolls away
           with a long nav list (nav above is the only scrollable region). */}
-      <div className="border-t border-primary-foreground/10 px-3 py-4">
+      <div className="border-t border-sidebar-foreground/10 px-3 py-4">
         {profile === undefined ? (
-          <Skeleton className="mb-3 h-10 w-full bg-primary-foreground/10" />
+          <Skeleton className="mb-3 h-10 w-full bg-sidebar-foreground/10" />
         ) : (
           <div className="mb-3 space-y-1 text-sm">
-            <div className="truncate text-primary-foreground/90">{session?.user?.email}</div>
+            <div className="truncate text-sidebar-foreground/90">{session?.user?.email}</div>
             {profile?.role ? (
               <Badge variant="secondary" className="capitalize">
                 {profile.role}
@@ -70,6 +71,10 @@ function SidebarContent({ profile, session, onNavigate, onLogout }) {
             ) : null}
           </div>
         )}
+        <ThemeToggle
+          showLabel
+          className="mb-2 w-full text-sidebar-foreground/80 hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground"
+        />
         <Button variant="secondary" size="sm" className="w-full" onClick={onLogout}>
           <LogOut className="h-4 w-4" />
           Log out
@@ -118,7 +123,7 @@ export function AppShell() {
     // height instead of being only as tall as its own content.
     <div className="flex min-h-screen bg-background md:h-dvh md:overflow-hidden">
       {/* Desktop sidebar — persistent, never collapses to a hamburger. */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r bg-primary text-primary-foreground md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
         <SidebarContent profile={profile} session={session} onLogout={handleLogout} />
       </aside>
 
@@ -133,7 +138,7 @@ export function AppShell() {
       ) : null}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 flex-col bg-primary text-primary-foreground transition-transform duration-200 md:hidden",
+          "fixed inset-y-0 left-0 z-50 w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 md:hidden",
           mobileOpen ? "flex translate-x-0" : "hidden -translate-x-full",
         )}
       >
@@ -141,7 +146,7 @@ export function AppShell() {
           <Button
             variant="ghost"
             size="icon"
-            className="text-primary-foreground hover:bg-primary-foreground/10"
+            className="text-sidebar-foreground hover:bg-sidebar-foreground/10"
             onClick={() => setMobileOpen(false)}
             aria-label="Close menu"
           >
@@ -165,11 +170,11 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col md:min-h-0">
         {/* Mobile top bar — hamburger + wordmark. Hidden on desktop, where
             the persistent sidebar already shows the wordmark. */}
-        <header className="flex items-center gap-3 border-b bg-primary px-4 py-3 text-primary-foreground md:hidden">
+        <header className="flex items-center gap-3 border-b bg-sidebar px-4 py-3 text-sidebar-foreground md:hidden">
           <Button
             variant="ghost"
             size="icon"
-            className="text-primary-foreground hover:bg-primary-foreground/10"
+            className="text-sidebar-foreground hover:bg-sidebar-foreground/10"
             onClick={() => setMobileOpen(true)}
             aria-label="Open menu"
           >
@@ -226,8 +231,9 @@ export function AppShell() {
 export function FocusedShell() {
   return (
     <div className="flex min-h-screen flex-col bg-background lg:h-dvh lg:overflow-hidden">
-      <header className="shrink-0 border-b bg-primary px-4 py-1.5 text-primary-foreground">
+      <header className="flex shrink-0 items-center justify-between border-b bg-sidebar px-4 py-1.5 text-sidebar-foreground">
         <span className="text-sm font-semibold tracking-wide">ScaleCert</span>
+        <ThemeToggle className="size-7 text-sidebar-foreground hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground" />
       </header>
       <main className="flex-1 px-4 py-3 sm:px-6 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden lg:py-2">
         <Outlet />

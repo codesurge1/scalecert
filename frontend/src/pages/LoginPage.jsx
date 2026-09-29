@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export function LoginPage() {
   const session = useSession();
@@ -29,7 +30,8 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted px-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-muted px-4">
+      <ThemeToggle className="absolute right-4 top-4" />
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
           <CardTitle className="text-xl">ScaleCert</CardTitle>

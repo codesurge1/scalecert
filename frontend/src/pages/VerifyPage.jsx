@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const VERIFICATION_TYPE_LABELS = {
   initial: "Initial verification",
@@ -154,7 +155,8 @@ export function VerifyPage() {
   }, [certNumber]);
 
   return (
-    <div className="flex min-h-screen items-start justify-center bg-slate-50 px-4 py-10 dark:bg-slate-950 sm:py-16">
+    <div className="relative flex min-h-screen items-start justify-center bg-slate-50 px-4 py-10 dark:bg-slate-950 sm:py-16">
+      <ThemeToggle className="absolute right-4 top-4" />
       <div className="w-full max-w-lg">
         <div className="mb-6 text-center">
           <div className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">ScaleCert</div>
